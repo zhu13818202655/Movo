@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "catalog_version": "2026-09-28",
+  "note": "整体可更新：新增/下线模型只改本文件，不写入领域逻辑。用户可在设置页手动输入其他模型 ID（测试连通后保存为自定义项）。",
+  "vendors": [
+    {
+      "vendor": "openai",
+      "display_name": "OpenAI",
+      "key_prefix_hint": "sk-",
+      "endpoint": "https://api.openai.com/v1/chat/completions",
+      "test_endpoint": "https://api.openai.com/v1/models",
+      "models": [
+        {
+          "id": "gpt-5.1",
+          "display_name": "GPT-5.1",
+          "context_hint": "通用首选，结构化输出稳定"
+        },
+        {
+          "id": "gpt-5.1-mini",
+          "display_name": "GPT-5.1 mini",
+          "context_hint": "更快更省，适合日常短句整理"
+        },
+        {
+          "id": "gpt-4.1",
+          "display_name": "GPT-4.1",
+          "context_hint": "长上下文，适合大段粘贴"
+        }
+      ]
+    },
+    {
+      "vendor": "claude",
+      "display_name": "Claude",
+      "key_prefix_hint": "sk-ant-",
+      "endpoint": "https://api.anthropic.com/v1/messages",
+      "test_endpoint": "https://api.anthropic.com/v1/models",
+      "models": [
+        {
+          "id": "claude-sonnet-4-6",
+          "display_name": "Claude Sonnet 4.6",
+          "context_hint": "工具调用（tool_use）结构化输出"
+        },
+        {
+          "id": "claude-haiku-4-5",
+          "display_name": "Claude Haiku 4.5",
+          "context_hint": "低延迟，适合逐条整理"
+        }
+      ]
+    }
+  ]
+}

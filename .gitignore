@@ -1,0 +1,67 @@
+# ===============================================================
+# Movo · Git 忽略规则
+#
+# 关键约定：Movo/Movo.xcodeproj 由 XcodeGen 从 Movo/project.yml 生成，
+#           不入库。克隆仓库后先执行：
+#               cd Movo && xcodegen generate --spec project.yml
+# ===============================================================
+
+# ------------------------------- 构建产物 -------------------------------
+# 本仓库同时存在 .build/（仓库根）与 Movo/.build/，两者都忽略
+.build/
+.derived/
+DerivedData/
+DerivedData-*/
+*.xcresult
+
+# xcodebuild 未指定 -derivedDataPath 时的默认输出目录
+Movo/build/
+Movo/build-ios/
+
+# --------------------------- 生成的 Xcode 工程 ---------------------------
+# 由 project.yml 生成，改工程设置请改 project.yml
+Movo/Movo.xcodeproj/
+*.xcworkspace/
+
+# --------------------------- Xcode 用户态数据 ----------------------------
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM
+*.dSYM.zip
+*.xcarchive
+
+# ----------------------------- 包管理缓存 -------------------------------
+.swiftpm/
+Package.resolved
+
+# -------------------------------- macOS ---------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+
+# ------------------------------ 编辑器 / IDE -----------------------------
+# 如需跨机器共享 VS Code 的任务与调试配置，删除下面这行
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --------------------------- 密钥与本地凭据（禁止入库）--------------------
+# API Key 运行时存 Keychain，不落仓库；以下为防误提交
+*.p12
+*.pfx
+*.cer
+*.mobileprovision
+*.provisionprofile
+.env
+.env.*
+!/.env.example

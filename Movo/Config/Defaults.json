@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "note": "易变产品参数集中于此，不进领域逻辑。第 14 章『开工时固定』的默认值。",
+  "notifications": {
+    "timed_task_lead_minutes": 0,
+    "date_only_task_hour": 9,
+    "date_only_task_minute": 0,
+    "hard_deadline_lead_days": 1,
+    "hard_deadline_same_day_hour": 9,
+    "hard_deadline_same_day_minute": 0,
+    "quiet_hours_start": 22,
+    "quiet_hours_end": 7,
+    "aggregation_window_minutes": 15,
+    "weekly_review_weekday": 7,
+    "weekly_review_hour": 20,
+    "weekly_review_minute": 0,
+    "blocked_reminder_enabled": false,
+    "blocked_reschedule_threshold": 3,
+    "lock_screen_hide_details": true
+  },
+  "ai": {
+    "classification_confidence_threshold": 0.90,
+    "classification_margin_threshold": 0.15,
+    "max_items_per_input": 10,
+    "max_text_characters": 2000,
+    "recent_task_titles_limit": 10,
+    "context_tasks_limit": 30,
+    "connect_timeout_seconds": 10,
+    "total_timeout_seconds": 30,
+    "auto_retry_count": 2,
+    "auto_retry_backoff_seconds": [1, 2],
+    "progress_must_show_after_seconds": 15
+  },
+  "capture": {
+    "max_recording_seconds": 180,
+    "stop_final_segment_timeout_seconds": 3,
+    "audio_retention_hours": 24,
+    "audio_retention_default": "none"
+  },
+  "sync": {
+    "record_state_json_limit_bytes": 65536,
+    "event_push_batch_size": 500,
+    "debounce_seconds": 3
+  },
+  "lifecycle": {
+    "tombstone_retention_days": 30
+  },
+  "hotkey": {
+    "quick_capture_key": "n",
+    "quick_capture_modifiers": ["command", "shift"]
+  }
+}

@@ -1,0 +1,195 @@
+name: Movo
+options:
+  bundleIdPrefix: com.louis
+  createIntermediateGroups: true
+  groupSortPosition: top
+  deploymentTarget:
+    iOS: "26.0"
+    macOS: "26.0"
+  developmentLanguage: zh-Hans
+  xcodeVersion: "27.0"
+  generateEmptyDirectories: false
+
+configs:
+  Debug: debug
+  Release: release
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    ALWAYS_SEARCH_USER_PATHS: NO
+    CLANG_ENABLE_MODULES: YES
+    ENABLE_MODULE_VERIFIER: NO
+    DEAD_CODE_STRIPPING: YES
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    # —— 无签名基线：macOS / iOS 模拟器 / 单测，无需 Apple 账号即可编译运行 ——
+    CODE_SIGN_IDENTITY: ""
+    CODE_SIGNING_REQUIRED: NO
+    CODE_SIGNING_ALLOWED: NO
+    DEVELOPMENT_TEAM: ""
+    # —— 真机（iOS device）覆盖：自动签名 + 开发团队（RPD22D948M）——
+    CODE_SIGN_STYLE[sdk=iphoneos*]: Automatic
+    CODE_SIGN_IDENTITY[sdk=iphoneos*]: "Apple Development"
+    CODE_SIGNING_REQUIRED[sdk=iphoneos*]: YES
+    CODE_SIGNING_ALLOWED[sdk=iphoneos*]: YES
+    DEVELOPMENT_TEAM[sdk=iphoneos*]: "RPD22D948M"
+    SWIFT_EMIT_LOC_STRINGS: YES
+    LOCALIZATION_PREFERS_STRING_CATALOGS: YES
+
+targets:
+  # ---------------------------------------------------------------- MovoKit
+  # 领域 / 数据 / 智能 / 通知 / 设计令牌：双端共享，无 UI 依赖（DesignSystem 仅用 SwiftUI 绘制）
+  MovoKit:
+    type: framework
+    supportedDestinations: [iOS, macOS]
+    sources:
+      - path: Domain
+      - path: Data
+      - path: Intelligence
+      - path: Notifications
+      - path: DesignSystem
+      - path: Config
+        type: folder
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.louis.movo.kit
+        DEFINES_MODULE: YES
+        SKIP_INSTALL: YES
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: MovoKit
+        MACH_O_TYPE: mh_dylib
+
+  # ------------------------------------------------------------------ Movo
+  Movo:
+    type: application
+    supportedDestinations: [iOS, macOS]
+    sources:
+      - path: App
+      - path: Features
+      - path: Resources
+        excludes:
+          - "*.entitlements"
+      - path: Assets.xcassets
+        buildPhase: resources
+    dependencies:
+      - target: MovoKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.louis.movo
+        PRODUCT_NAME: Movo
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Movo
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+        # iCloud 同步开关：留空 = 不启用（本工程默认）。
+        # 启用时填容器 ID（如 iCloud.com.louis.movo），并**同时**取消
+        # Resources/Movo-iOS.entitlements 与 Movo-macOS.entitlements 中 iCloud 段落的注释。
+        # 注意：无 entitlement 时访问 CKContainer 会抛 ObjC 异常直接终止进程，且无法捕获。
+        INFOPLIST_KEY_MovoICloudContainerID: ""
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: "用于在本机把你说的话转写成文字，音频不会上传。"
+        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "用于把录音在本机转写为文字，转写不离开这台设备。"
+        INFOPLIST_KEY_NSHumanReadableCopyright: "Movo"
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UIUserInterfaceStyle: Automatic
+        INFOPLIST_KEY_NSUserNotificationsUsageDescription: "用于在你安排的时间提醒你，不推送健康详情。"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        CODE_SIGN_ENTITLEMENTS[sdk=macosx*]: Resources/Movo-macOS.entitlements
+        ENABLE_HARDENED_RUNTIME[sdk=macosx*]: NO
+        LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]:
+          - "$(inherited)"
+          - "@executable_path/../Frameworks"
+        INFOPLIST_KEY_NSMainStoryboardFile[sdk=macosx*]: ""
+        INFOPLIST_KEY_NSPrincipalClass[sdk=macosx*]: NSApplication
+
+  # --------------------------------------------------------------- Test targets
+  MovoDomainTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [../Tests/MovoDomainTests]
+    dependencies:
+      - target: MovoKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.louis.movo.tests.domain
+        GENERATE_INFOPLIST_FILE: YES
+
+  MovoDataTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [../Tests/MovoDataTests]
+    dependencies:
+      - target: MovoKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.louis.movo.tests.data
+        GENERATE_INFOPLIST_FILE: YES
+
+  MovoPrivacyTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [../Tests/MovoPrivacyTests]
+    dependencies:
+      - target: MovoKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.louis.movo.tests.privacy
+        GENERATE_INFOPLIST_FILE: YES
+
+  MovoAdapterTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [../Tests/MovoAdapterTests]
+    dependencies:
+      - target: MovoKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.louis.movo.tests.adapter
+        GENERATE_INFOPLIST_FILE: YES
+
+  MovoSyncTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [../Tests/MovoSyncTests]
+    dependencies:
+      - target: MovoKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.louis.movo.tests.sync
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  Movo:
+    build:
+      targets:
+        Movo: all
+        MovoKit: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      gatherCoverageData: false
+      targets:
+        - MovoDomainTests
+        - MovoDataTests
+        - MovoPrivacyTests
+        - MovoAdapterTests
+        - MovoSyncTests
+  MovoKit:
+    build:
+      targets:
+        MovoKit: all
+    test:
+      config: Debug
+      targets:
+        - MovoDomainTests
+        - MovoDataTests
+        - MovoPrivacyTests
+        - MovoAdapterTests
+        - MovoSyncTests
