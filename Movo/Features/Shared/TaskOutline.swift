@@ -12,9 +12,7 @@ struct TaskOutline: View {
     @State private var deletionIDs: Set<UUID> = []
     @State private var showDelete = false
     @State private var inlineParent: UUID?
-    @State private var childTitle = ""
-    @State private var savingChild = false
-    @FocusState private var childFocused: Bool
+    @State private var editing: UUID?
 
     private struct Row: Identifiable {
         var id: UUID { node.id }
@@ -42,17 +40,14 @@ struct TaskOutline: View {
         VStack(alignment: .leading, spacing: 0) {
             if let error { Text(error).font(MovoFont.caption).foregroundStyle(.red).padding(MovoSpace.s) }
             ForEach(rows) { row in
-                outlineRow(row)
+                if editing == row.id {
+                    InlineTaskEditor(task: row.node.task, onSaved: { _ in editing = nil },
+                                     onCancel: { editing = nil })
+                } else {
+                    outlineRow(row)
+                }
                 if inlineParent == row.id {
-                    HStack {
-                        TextField("子任务标题，回车添加", text: $childTitle)
-                            .textFieldStyle(.roundedBorder).focused($childFocused)
-                            .onSubmit { _Concurrency.Task { await addChild(row.node) } }
-                        MovoButton("添加", isEnabled: !childTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                                   isLoading: savingChild) { _Concurrency.Task { await addChild(row.node) } }
-                        Button("取消") { inlineParent = nil; childTitle = "" }
-                    }
-                    .padding(MovoSpace.s)
+                    InlineTaskEditor(parentID: row.id, onCancel: { inlineParent = nil })
                 }
                 MovoDivider()
             }
@@ -105,9 +100,10 @@ struct TaskOutline: View {
                 .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
             }.buttonStyle(.plain)
             Menu {
+                Button("就地编辑") { editing = node.id; inlineParent = nil }
                 if !node.task.isTemplate {
                     Button("添加子任务") {
-                        inlineParent = node.id; childTitle = ""; childFocused = true
+                        inlineParent = node.id; editing = nil
                         collapsed.remove(node.id)
                     }
                     Button("移动到…") { router.present(.moveTask(node.id)) }
@@ -157,21 +153,6 @@ struct TaskOutline: View {
                 _ = try await env.store.execute(CompleteTask(taskID: node.id, at: .precise(env.store.now),
                                                             baseRevision: node.task.revision))
             }
-            env.lastBatchNotice = env.store.lastNotification
-        } catch { self.error = error.localizedDescription }
-    }
-
-    private func addChild(_ node: TodoNode) async {
-        guard !savingChild, !childTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        savingChild = true
-        defer { savingChild = false }
-        do {
-            guard let parent = await env.store.repository.task(node.id) else {
-                throw MovoError.notFound(entityType: .task, id: node.id)
-            }
-            _ = try await env.store.execute(CreateTask(title: childTitle, planID: parent.planId,
-                                                       stageID: parent.stageId, parentID: parent.id))
-            childTitle = ""
             env.lastBatchNotice = env.store.lastNotification
         } catch { self.error = error.localizedDescription }
     }

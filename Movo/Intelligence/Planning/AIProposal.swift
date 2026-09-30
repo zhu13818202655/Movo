@@ -14,6 +14,7 @@ import Foundation
 public enum AIAction: String, Sendable, Codable, CaseIterable {
     case completeTask = "complete_task"
     case createTask = "create_task"
+    case createPlan = "create_plan"
     case logActivity = "log_activity"
     case matchOccurrence = "match_occurrence"
     case needsClarification = "needs_clarification"
@@ -28,6 +29,7 @@ public enum AIAction: String, Sendable, Codable, CaseIterable {
         switch self {
         case .completeTask: "标记完成"
         case .createTask: "新增待办"
+        case .createPlan: "新建计划"
         case .logActivity: "记录行动"
         case .matchOccurrence: "匹配重复项"
         case .needsClarification: "需要澄清"
@@ -43,7 +45,7 @@ public enum AIAction: String, Sendable, Codable, CaseIterable {
     /// 6.4：高影响动作一律 needs_confirmation（不得自动执行）
     public var requiresConfirmationByRule: Bool {
         switch self {
-        case .setDependency, .setRecurrence: true
+        case .createPlan, .setDependency, .setRecurrence: true
         default: false
         }
     }
@@ -54,7 +56,7 @@ public enum AIAction: String, Sendable, Codable, CaseIterable {
         case .completeTask, .logActivity, .matchOccurrence, .recordMeasurement,
              .scheduleExistingTask, .setDependency, .setRecurrence, .updateTask:
             true
-        case .createTask, .needsClarification, .saveNote:
+        case .createTask, .createPlan, .needsClarification, .saveNote:
             false
         }
     }
@@ -63,7 +65,7 @@ public enum AIAction: String, Sendable, Codable, CaseIterable {
 // MARK: - 数据块
 
 /// 日期解释（相对日期必须回填，便于校验一致性）
-public struct AIDateInterpretation: Sendable, Hashable {
+public struct AIDateInterpretation: Sendable, Hashable, Codable {
     public var rawText: String?
     public var resolvedDate: String?
     public var granularity: String?
@@ -77,7 +79,7 @@ public struct AIDateInterpretation: Sendable, Hashable {
 }
 
 /// 结果记录块
-public struct AIMeasurement: Sendable, Hashable {
+public struct AIMeasurement: Sendable, Hashable, Codable {
     public var metricId: String?
     public var value: Double?
     public var unit: String?
@@ -92,7 +94,7 @@ public struct AIMeasurement: Sendable, Hashable {
 }
 
 /// 想法 / 备忘块
-public struct AINote: Sendable, Hashable {
+public struct AINote: Sendable, Hashable, Codable {
     public var kind: String?
     public var text: String?
 
@@ -102,7 +104,7 @@ public struct AINote: Sendable, Hashable {
 }
 
 /// 任务相关块（create/update/schedule/complete/dependency 共用）
-public struct AIProposalTask: Sendable, Hashable {
+public struct AIProposalTask: Sendable, Hashable, Codable {
     public var candidateTaskId: String?
     public var title: String?
     public var notes: String?
@@ -130,7 +132,7 @@ public struct AIProposalTask: Sendable, Hashable {
 }
 
 /// 重复规则块
-public struct AIRecurrence: Sendable, Hashable {
+public struct AIRecurrence: Sendable, Hashable, Codable {
     public var pattern: String?
     public var count: Int?
     public var weekdays: [Int]
@@ -145,12 +147,27 @@ public struct AIRecurrence: Sendable, Hashable {
 
 // MARK: - 单条提议
 
-public struct AIProposalItem: Sendable, Hashable {
+public struct AIProposalPlan: Sendable, Hashable, Codable {
+    public var name: String
+    public var kind: PlanKind
+    public var goal: String?
+    public var targetDate: String?
+    public var tasks: [AIProposalTask]
+
+    public init(name: String, kind: PlanKind, goal: String? = nil,
+                targetDate: String? = nil, tasks: [AIProposalTask] = []) {
+        self.name = name; self.kind = kind; self.goal = goal
+        self.targetDate = targetDate; self.tasks = tasks
+    }
+}
+
+public struct AIProposalItem: Sendable, Hashable, Codable {
     public var sourceSpan: String?
     /// 原文偏移 [start, end)（对 `AIInput.text`）
     public var span: [Int]
     public var action: AIAction
     public var task: AIProposalTask?
+    public var plan: AIProposalPlan?
     public var dateInterpretation: AIDateInterpretation?
     public var recurrence: AIRecurrence?
     public var measurement: AIMeasurement?
@@ -161,12 +178,13 @@ public struct AIProposalItem: Sendable, Hashable {
     public var clarificationQuestion: String?
 
     public init(sourceSpan: String? = nil, span: [Int], action: AIAction,
-                task: AIProposalTask? = nil, dateInterpretation: AIDateInterpretation? = nil,
+                task: AIProposalTask? = nil, plan: AIProposalPlan? = nil,
+                dateInterpretation: AIDateInterpretation? = nil,
                 recurrence: AIRecurrence? = nil, measurement: AIMeasurement? = nil,
                 note: AINote? = nil, confidence: Double = 0, needsConfirmation: Bool = false,
                 reason: String? = nil, clarificationQuestion: String? = nil) {
         self.sourceSpan = sourceSpan; self.span = span; self.action = action
-        self.task = task; self.dateInterpretation = dateInterpretation
+        self.task = task; self.plan = plan; self.dateInterpretation = dateInterpretation
         self.recurrence = recurrence; self.measurement = measurement; self.note = note
         self.confidence = confidence; self.needsConfirmation = needsConfirmation
         self.reason = reason; self.clarificationQuestion = clarificationQuestion
@@ -174,9 +192,9 @@ public struct AIProposalItem: Sendable, Hashable {
 
     /// 稳定标识（用于去重、收件箱展示与列表 id）
     public var id: String {
-        if let sourceSpan, !sourceSpan.isEmpty { return sourceSpan }
-        if span.count == 2 { return "\(action.rawValue)#\(span[0])-\(span[1])" }
-        return action.rawValue
+        [action.rawValue, sourceSpan ?? span.map(String.init).joined(separator: "-"),
+         task?.candidateTaskId ?? task?.title ?? plan?.name ?? "", task?.scheduledDate ?? "",
+         measurement?.metricId ?? "", measurement?.measuredAt ?? "", note?.text ?? ""].joined(separator: "|")
     }
 
     /// 与动作无关的数据块（V2：动作与数据块必须匹配）
@@ -184,6 +202,7 @@ public struct AIProposalItem: Sendable, Hashable {
         let allowed = Self.allowedBlocks(for: action)
         var out: [String] = []
         if task != nil, !allowed.contains("task") { out.append("task") }
+        if plan != nil, !allowed.contains("plan") { out.append("plan") }
         if measurement != nil, !allowed.contains("measurement") { out.append("measurement") }
         if note != nil, !allowed.contains("note") { out.append("note") }
         if recurrence != nil, !allowed.contains("recurrence") { out.append("recurrence") }
@@ -192,6 +211,8 @@ public struct AIProposalItem: Sendable, Hashable {
 
     static func allowedBlocks(for action: AIAction) -> Set<String> {
         switch action {
+        case .createPlan:
+            return ["plan"]
         case .createTask, .updateTask, .matchOccurrence, .completeTask,
              .scheduleExistingTask, .setDependency:
             return ["task"]
@@ -202,7 +223,7 @@ public struct AIProposalItem: Sendable, Hashable {
         case .saveNote:
             return ["note"]
         case .setRecurrence:
-            return ["recurrence"]
+            return ["task", "recurrence"]
         case .needsClarification:
             return []
         }
@@ -211,7 +232,7 @@ public struct AIProposalItem: Sendable, Hashable {
 
 // MARK: - 提案
 
-public struct AIProposal: Sendable, Hashable {
+public struct AIProposal: Sendable, Hashable, Codable {
     public var schemaVersion: Int
     public var items: [AIProposalItem]
     public var provider: String?
@@ -268,6 +289,17 @@ public enum AIProposalSchema {
                 "is_hard_deadline": .object(["type": .string("boolean")])
             ])
         ])
+        let planBlock: JSONValue = .object([
+            "type": .string("object"),
+            "properties": .object([
+                "name": .object(["type": .string("string")]),
+                "kind": .object(["type": .string("string"), "enum": .array(PlanKind.allCases.map { .string($0.rawValue) })]),
+                "goal": .object(["type": .string("string")]),
+                "target_date": .object(["type": .string("string"), "description": .string("yyyy-MM-dd，仅用户明确指定时填写")]),
+                "tasks": .object(["type": .string("array"), "maxItems": .int(10), "items": taskBlock])
+            ]),
+            "required": .array([.string("name"), .string("kind")])
+        ])
         let recurrenceBlock: JSONValue = .object([
             "type": .string("object"),
             "properties": .object([
@@ -304,6 +336,7 @@ public enum AIProposalSchema {
                     "enum": .array(AIAction.allCases.map { .string($0.rawValue) })
                 ]),
                 "task": taskBlock,
+                "plan": planBlock,
                 "date_interpretation": dateInterpretation,
                 "recurrence": recurrenceBlock,
                 "measurement": measurementBlock,
@@ -313,7 +346,8 @@ public enum AIProposalSchema {
                 "reason": .object(["type": .string("string")]),
                 "clarification_question": .object(["type": .string("string")])
             ]),
-            "required": .array([.string("span"), .string("action")])
+            "required": .array([.string("source_span"), .string("span"), .string("action"),
+                                .string("confidence"), .string("needs_confirmation")])
         ])
         return [
             "type": .string("object"),

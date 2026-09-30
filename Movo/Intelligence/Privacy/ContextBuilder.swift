@@ -109,10 +109,13 @@ public enum AIContextBuilder {
     1. 只提议，不执行；你输出的是待执行的提案。
     2. 只能引用清单中出现过的 id（plan_id / candidate_task_id / metric_id）。不得虚构 id。
     3. 不得虚构日期、数值或单位。相对时间（今天/明天/周五）按给定 today 与 timezone 解析，并回填 date_interpretation。
-    4. 歧义或信息不足时，action 用 needs_clarification，不要猜测归属。
+    4. 明确要做的事情用 create_task。没有计划也能创建，省略 plan_id；只是不确定归属时仍创建独立待办，不要阻止记录。动作本身不明确才用 needs_clarification。
     5. 单条输入最多 10 个 items。查询类意图（"有哪些""找一下"）不要输出 items。
     6. 涉及先后顺序的依赖建议，needs_confirmation 必须为 true。
     7. confidence 只供内部阈值判断，界面不展示。
+    8. 用户明确要求建立计划时用 create_plan，plan 包含 name、kind（delivery/improvement/maintenance）、可选 goal、target_date、tasks。它必须 needs_confirmation=true。仅表达愿望时保存想法，不擅自制定目标、日期、指标。计划内的 tasks 不得引用或虚构 plan_id、stage_id、parent_task_id 或依赖 id，客户端确认后统一分配。
+    9. source_span 必须逐字引用 text 的片段。span 为该片段在 text 中按字符计数的 [起点,终点)，不按 UTF-8 字节计数。不确定偏移时仍须保留准确的 source_span。
+    10. 普通“明天做”填写 scheduled_date，不能当作 hard_deadline。硬截止只有原文明确要求时才填写；没有具体时刻时不得虚构时刻。
     """
 
     /// 构建云上下文。`plans` 必须已按 cloudAIEnabled && status == active 过滤；

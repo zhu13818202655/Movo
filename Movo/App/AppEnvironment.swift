@@ -102,7 +102,17 @@ public final class AppEnvironment {
     // MARK: 采集管线（6.1）
 
     public var activeCaptureID: UUID?
-    public var captureText: String = ""
+    public var captureText: String = "" {
+        didSet { capturePreferences?.set(captureText, forKey: "movo.capture.draft") }
+    }
+    public var capturePlanID: UUID? {
+        didSet { capturePreferences?.set(capturePlanID?.uuidString, forKey: "movo.capture.plan") }
+    }
+    public var captureInputMode: InputMode = .text
+    public var isSubmittingCapture = false
+    public var captureResults: [UUID: ProposalPreparation] = [:]
+    var savedProposals: [UUID: AIProposal] = [:]
+    @ObservationIgnored let capturePreferences: UserDefaults?
     public var isProcessing = false
     public var lastTranscript: TranscriptFinal?
 
@@ -120,7 +130,7 @@ public final class AppEnvironment {
                 speech: any SpeechTranscriptionService,
                 notificationScheduler: any NotificationScheduling = LocalNotificationScheduler(),
                 aiSettingsStore: any AISettingsStore = InMemoryAISettingsStore(),
-                vendor: AIVendor? = nil) {
+                vendor: AIVendor? = nil, capturePreferences: UserDefaults? = nil) {
         self.store = store
         self.defaults = defaults
         self.catalog = catalog
@@ -128,6 +138,14 @@ public final class AppEnvironment {
         self.speech = speech
         self.notificationScheduler = notificationScheduler
         self.aiSettingsStore = aiSettingsStore
+        self.capturePreferences = capturePreferences
+        self.captureText = capturePreferences?.string(forKey: "movo.capture.draft") ?? ""
+        self.capturePlanID = capturePreferences?.string(forKey: "movo.capture.plan").flatMap(UUID.init(uuidString:))
+        self.activeCaptureID = capturePreferences?.string(forKey: "movo.capture.active").flatMap(UUID.init(uuidString:))
+        if let data = capturePreferences?.data(forKey: "movo.capture.proposals"),
+           let proposals = try? JSONDecoder().decode([UUID: AIProposal].self, from: data) {
+            self.savedProposals = proposals
+        }
 
         let saved = aiSettingsStore.load()
         let resolvedVendor = vendor ?? saved.vendor
@@ -273,7 +291,7 @@ public final class AppEnvironment {
         return AppEnvironment(store: store, defaults: defaults, catalog: catalog,
                               keyStore: KeychainAIKeyStore(),
                               speech: AppleSpeechTranscriptionService(defaults: defaults),
-                              aiSettingsStore: UserDefaultsAISettingsStore())
+                              aiSettingsStore: UserDefaultsAISettingsStore(), capturePreferences: .standard)
     }
 
     /// 预览/测试环境：内存仓库 + 内存 Keychain + 内存 AI 偏好。

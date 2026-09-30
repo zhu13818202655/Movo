@@ -20,6 +20,7 @@ public struct PendingProposal: Identifiable, Sendable {
         case measurementUnitUnclear
         case classificationAmbiguous
         case bulkChange
+        case planCreation
 
         public var displayName: String {
             switch self {
@@ -29,6 +30,7 @@ public struct PendingProposal: Identifiable, Sendable {
             case .measurementUnitUnclear: "结果单位待确认"
             case .classificationAmbiguous: "归属待确认"
             case .bulkChange: "批量改动"
+            case .planCreation: "新建计划"
             }
         }
     }
@@ -75,6 +77,7 @@ public struct ProposalIssue: Identifiable, Hashable, Sendable {
 public struct ValidatedProposal: Sendable {
     /// 可自动执行并撤销的命令
     public var commands: [any DomainCommand]
+    public var commandKeys: [UUID: String] = [:]
     /// 需要用户确认的提议
     public var needsConfirmation: [PendingProposal]
     /// 校验未过项（进收件箱）
@@ -125,6 +128,7 @@ public enum ProposalValidator {
                                 source: SourceKind) -> ValidatedProposal {
 
         var commands: [any DomainCommand] = []
+        var commandKeys: [UUID: String] = [:]
         var needsConfirmation: [PendingProposal] = []
         var issues: [ProposalIssue] = []
         var corrections: [String] = []
@@ -144,6 +148,19 @@ public enum ProposalValidator {
         var dedupKeys: Set<String> = []
 
         for var item in items {
+            let commandStart = commands.count
+            defer {
+                for (index, command) in commands.dropFirst(commandStart).enumerated() {
+                    commandKeys[command.operationID] = "\(item.action.rawValue)|\(item.id)|\(item.task?.title ?? "")|\(index)"
+                }
+            }
+            // 模型容易算错中文/emoji 偏移；只有原文片段唯一精确命中时才修正。
+            if let source = item.sourceSpan, !source.isEmpty,
+               let range = input.text.range(of: source),
+               input.text.range(of: source, range: range.upperBound..<input.text.endIndex) == nil {
+                item.span = [input.text.distance(from: input.text.startIndex, to: range.lowerBound),
+                             input.text.distance(from: input.text.startIndex, to: range.upperBound)]
+            }
             // MARK: V1 原文一致性（定位必须落在发送文本范围内）
             guard item.span.count == 2,
                   item.span[0] >= 0, item.span[1] <= characters.count,
@@ -158,9 +175,10 @@ public enum ProposalValidator {
             if let declared = item.sourceSpan, !declared.isEmpty {
                 let actual = spanText.trimmingCharacters(in: .whitespacesAndNewlines)
                 let claimed = declared.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !actual.isEmpty, !claimed.isEmpty, actual != claimed,
-                   !actual.contains(claimed), !claimed.contains(actual) {
-                    corrections.append("「\(claimed)」的原文定位已按实际文本校正。")
+                if actual != claimed {
+                    issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                reasons: [.structureViolation("模型引用的片段与原文不一致，请编辑后重试")]))
+                    continue
                 }
             }
 
@@ -175,6 +193,8 @@ public enum ProposalValidator {
             var dedupKey = item.action.rawValue + "|" + spanText.trimmingCharacters(in: .whitespacesAndNewlines)
             if let target = item.task?.candidateTaskId { dedupKey += "|" + target }
             if let scheduled = item.task?.scheduledDate { dedupKey += "|" + scheduled }
+            if let title = item.task?.title { dedupKey += "|" + title }
+            if let name = item.plan?.name { dedupKey += "|" + name }
             guard dedupKeys.insert(dedupKey).inserted else {
                 mergedDuplicates += 1
                 continue
@@ -183,6 +203,61 @@ public enum ProposalValidator {
             let spec = item.task
 
             switch item.action {
+
+            case .createPlan:
+                guard let plan = item.plan else {
+                    issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                reasons: [.structureViolation("缺少计划名称或有效类型")]))
+                    continue
+                }
+                do { try StructurePolicy.validatePlanName(plan.name) }
+                catch {
+                    issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                reasons: [.structureViolation("计划名称无效")]))
+                    continue
+                }
+                if let date = plan.targetDate,
+                   DateOnly(iso8601DateString: date, sourceTZ: timeZone.identifier) == nil {
+                    issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                reasons: [.unparsableDate]))
+                    continue
+                }
+                guard plan.tasks.count <= defaults.ai.maxItemsPerInput else {
+                    issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                reasons: [.structureViolation("计划待办过多，请分次整理")]))
+                    continue
+                }
+                var taskIssues: [ProposalIssue] = []
+                for task in plan.tasks {
+                    guard task.planId == nil, task.stageId == nil, task.parentTaskId == nil,
+                          task.candidateTaskId == nil, task.dependencyIds.isEmpty,
+                          (task.title?.count ?? 0) <= Task.maxTitleLength,
+                          !(task.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                        taskIssues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                        reasons: [.structureViolation("计划待办缺少标题或引用了未经确认的结构")]))
+                        continue
+                    }
+                    let child = AIProposalItem(sourceSpan: item.sourceSpan, span: item.span,
+                                               action: .createTask, task: task, confidence: item.confidence)
+                    let checked = validate(proposal: AIProposal(items: [child]), input: input,
+                                           plans: plans, tasks: tasks, metrics: metrics, occurrences: occurrences,
+                                           today: today, timeZone: timeZone, defaults: defaults,
+                                           deviceId: deviceId, captureID: captureID, source: source)
+                    taskIssues += checked.issues
+                }
+                guard taskIssues.isEmpty else { issues += taskIssues; continue }
+                var lines = [ImpactPreview.ImpactLine(entityId: UUID(), title: "计划类型", changeText: plan.kind.displayName)]
+                if let goal = plan.goal { lines.append(.init(entityId: UUID(), title: "目标", changeText: goal)) }
+                if let date = plan.targetDate { lines.append(.init(entityId: UUID(), title: "目标日期", changeText: date)) }
+                lines += plan.tasks.map { task in
+                    let details = [task.scheduledDate.map { "安排 \($0)" },
+                                   task.hardDeadline.map { "硬截止 \($0)" }, task.notes].compactMap { $0 }
+                    return .init(entityId: UUID(), title: "新增：\(task.title ?? "")",
+                                 changeText: details.isEmpty ? "未安排" : details.joined(separator: " · "))
+                }
+                needsConfirmation.append(PendingProposal(id: item.id, item: item,
+                                                          affectedSummary: plan.name,
+                                                          changeSummary: lines, kind: .planCreation))
 
             // MARK: needs_clarification → 收件箱补充信息
             case .needsClarification:
@@ -193,6 +268,24 @@ public enum ProposalValidator {
 
             // MARK: create_task
             case .createTask:
+                if let stageID = spec?.stageId, !stageID.isEmpty {
+                    issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                reasons: [.unknownReference(stageID)],
+                                                suggestedAction: "先创建待办，再从详情选择阶段。"))
+                    continue
+                }
+                if let rawParent = spec?.parentTaskId, !rawParent.isEmpty,
+                   !(UUID(uuidString: rawParent).map { input.allowedTaskIDs.contains($0) } ?? false) {
+                    issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                reasons: [.unknownReference(rawParent)]))
+                    continue
+                }
+                if !(spec?.dependencyIds.isEmpty ?? true) {
+                    issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                reasons: [.structureViolation("新待办的前置关系需要单独确认")],
+                                                suggestedAction: "先创建待办，再在详情设置前置任务。"))
+                    continue
+                }
                 let rawTitle = (spec?.title ?? spanText).trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !rawTitle.isEmpty else {
                     issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
@@ -259,16 +352,25 @@ public enum ProposalValidator {
                 }
 
                 let context = ExecutionContext(confidence: item.confidence,
-                                               candidateMatchCount: planID == nil ? 0 : 1)
-                let decision = ExecutionPolicy.decide(for: item.action, context: context)
+                                               candidateMatchCount: planID == nil ? 0 : 1,
+                                               autoClassificationConfidence: defaults.ai.classificationConfidenceThreshold,
+                                               autoClassificationMargin: defaults.ai.classificationMarginThreshold)
+                if planID != nil, !ExecutionPolicy.allowsAutoClassification(context) {
+                    planID = nil
+                    item.task?.planId = nil
+                    item.task?.stageId = nil
+                    item.task?.parentTaskId = nil
+                    corrections.append("「\(title)」已保存为独立待办，可以稍后选择计划。")
+                }
+                let decision = planID == nil ? ExecutionDecision.auto : ExecutionPolicy.decide(for: item.action, context: context)
 
                 switch decision {
                 case .auto:
                     commands.append(CreateTask(
                         title: title,
                         planID: planID,
-                        stageID: spec?.stageId.flatMap { UUID(uuidString: $0) },
-                        parentID: spec?.parentTaskId.flatMap { UUID(uuidString: $0) },
+                        stageID: planID == nil ? nil : spec?.stageId.flatMap { UUID(uuidString: $0) },
+                        parentID: planID == nil ? nil : spec?.parentTaskId.flatMap { UUID(uuidString: $0) },
                         notes: spec?.notes,
                         scheduledDate: scheduled,
                         deadline: deadline,
@@ -659,10 +761,12 @@ public enum ProposalValidator {
             }
         }
 
-        return ValidatedProposal(commands: commands, needsConfirmation: needsConfirmation,
+        var result = ValidatedProposal(commands: commands, needsConfirmation: needsConfirmation,
                                  issues: issues, corrections: corrections,
                                  mergedDuplicates: mergedDuplicates,
                                  truncationNotice: truncationNotice)
+        result.commandKeys = commandKeys
+        return result
     }
 
     // MARK: - 私有工具

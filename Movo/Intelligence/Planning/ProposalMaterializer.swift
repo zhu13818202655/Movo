@@ -18,7 +18,7 @@ public extension ProposalValidator {
                             timeZone: TimeZone,
                             today: DateOnly,
                             source: SourceKind,
-                            captureID: UUID?) -> [any DomainCommand] {
+                            captureID: UUID?, planID: UUID = UUID()) -> [any DomainCommand] {
         let item = pending.item
         let spec = item.task
         var out: [any DomainCommand] = []
@@ -26,6 +26,24 @@ public extension ProposalValidator {
         func uuid(_ raw: String?) -> UUID? { raw.flatMap { UUID(uuidString: $0) } }
 
         switch pending.kind {
+        case .planCreation:
+            guard let plan = item.plan else { return [] }
+            out.append(CreatePlan(id: planID, name: plan.name, kind: plan.kind, goal: plan.goal,
+                                  targetDate: plan.targetDate.flatMap {
+                                      DateOnly(iso8601DateString: $0, sourceTZ: timeZone.identifier)
+                                  }, cloudAIEnabled: false, syncEnabled: false))
+            for task in plan.tasks {
+                let scheduled = task.scheduledDate.flatMap {
+                    DateOnly(iso8601DateString: dayPrefix($0), sourceTZ: timeZone.identifier)
+                }.map { max($0, today) }
+                out.append(CreateTask(title: task.title ?? "", planID: planID, notes: task.notes,
+                                      scheduledDate: scheduled,
+                                      deadline: task.hardDeadline.flatMap { parseDeadline($0, fallbackTZ: timeZone) },
+                                      estimateMinutes: task.estimateMinutes,
+                                      priority: task.priority.flatMap { TaskPriority(rawValue: normalizePriority($0)) },
+                                      tags: task.tags, source: source, captureID: captureID))
+            }
+
         case .classificationAmbiguous:
             guard let spec else { return [] }
             let title = (spec.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)

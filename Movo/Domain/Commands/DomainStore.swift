@@ -77,6 +77,9 @@ public final class DomainStore {
     /// 批量/幂等（batchId）；先影响预览，确认后才作为单 batch 提交
     public func executeBatch(_ input: BatchInput) async throws -> BatchResult {
         let batchID = input.batchID
+        if let batch = await repository.batch(batchID), batch.state == .undone {
+            return BatchResult(batchID: batchID, state: .undone, summary: batch.summary)
+        }
         let results = try await run(input.commands, batchID: batchID,
                                     captureID: input.captureId, source: input.source,
                                     summary: input.summary)
@@ -99,6 +102,9 @@ public final class DomainStore {
     /// 单条失败不阻断其余；失败项进入收件箱（6.2 C8）。
     public func executeBatchAllowingPartial(_ input: BatchInput) async throws -> BatchResult {
         let batchID = input.batchID
+        if let batch = await repository.batch(batchID), batch.state == .undone {
+            return BatchResult(batchID: batchID, state: .undone, summary: batch.summary)
+        }
         var applied: [UUID] = []
         var rejected: [BatchRejection] = []
         let stamp = clock.now()
@@ -107,6 +113,7 @@ public final class DomainStore {
 
         for command in input.commands {
             if idempotencyCache[command.operationID] != nil { continue }
+            if await repository.operation(command.operationID)?.status == .undone { continue }
             if await repository.operation(command.operationID)?.status == .applied { continue }
             try await repository.beginTransaction()
             do {
@@ -225,6 +232,24 @@ public final class DomainStore {
             }
         }
 
+        // 新计划与初始待办同批创建；后续编辑保留了子项时，也必须保留其归属。
+        let deletedIDs = Set(await repository.tombstones(activeOnly: true).map(\.entityId))
+        let allTasks = await repository.allTasks()
+        let safelyCreatedIDs = Set(operations.filter { $0.kind.isUndoable && !skipped.contains($0.id) }.map(\.entityId))
+        for op in operations where op.kind == .createPlan && op.status == .applied && !skipped.contains(op.id) {
+            let hasRetainedTask = allTasks.contains {
+                $0.planId == op.entityId && !deletedIDs.contains($0.id) && !safelyCreatedIDs.contains($0.id)
+            }
+            let stages = await repository.stages(planID: op.entityId)
+            let metrics = await repository.metrics(planID: op.entityId)
+            let hasRetainedStructure = stages.contains { !deletedIDs.contains($0.id) && !safelyCreatedIDs.contains($0.id) }
+                || metrics.contains { !deletedIDs.contains($0.id) && !safelyCreatedIDs.contains($0.id) }
+            if hasRetainedTask || hasRetainedStructure {
+                unsafe.append((op.id, "计划中有后续添加或修改的内容，已保留计划。"))
+                skipped.insert(op.id)
+            }
+        }
+
         try await repository.beginTransaction()
         do {
             for op in operations.reversed() {
@@ -233,6 +258,9 @@ public final class DomainStore {
                                          defaults: defaults, deviceId: deviceId,
                                          operationID: UUID(), batchID: batchID)
                 try await Self.applyInverse(op: op, in: ctx)
+                var updatedOperation = op
+                updatedOperation.status = .undone
+                _ = try await ctx.write(updatedOperation, old: op)
                 undone.append(op.id)
             }
             var updatedBatch = batch
@@ -398,6 +426,7 @@ public final class DomainStore {
                      source: BatchSource = .userManual,
                      summary: String = "") async throws -> [CommandResult] {
         let bid = batchID ?? UUID()
+        if await repository.batch(bid)?.state == .undone { return [] }
         let stamp = clock.now()
         let tz = timeZoneProvider.current()
         let today = DateOnly(from: stamp, in: tz)
@@ -406,6 +435,7 @@ public final class DomainStore {
         try await repository.beginTransaction()
         do {
             for command in commands {
+                if await repository.operation(command.operationID)?.status == .undone { continue }
                 if let cached = idempotencyCache[command.operationID] {
                     results.append(cached)
                     continue

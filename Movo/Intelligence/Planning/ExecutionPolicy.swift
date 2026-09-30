@@ -119,14 +119,14 @@ public enum ExecutionPolicy {
             return allowsAutoClassification(context) ? .auto : .inboxSuggestion
 
         case .createTask:
-            // 单条待办无需先建计划；归属不确定时进收件箱
-            if context.candidateMatchCount == 0 { return .inboxSuggestion }
+            // 新待办不要求已有计划；归属不确定由校验器降为独立待办。
+            if context.candidateMatchCount == 0 { return .auto }
             return allowsAutoClassification(context) ? .auto : .inboxSuggestion
 
         case .saveNote:
             return .auto
 
-        case .setDependency, .setRecurrence:
+        case .createPlan, .setDependency, .setRecurrence:
             return .confirm
         }
     }
@@ -165,7 +165,8 @@ public enum ExecutionPolicy {
     /// 供影响预览与设置页展示的规则说明
     public static func ruleDescription(for action: AIAction) -> String {
         switch action {
-        case .createTask: "新建待办：标题必填；归属不确定时先放进收件箱。"
+        case .createTask: "新建待办：标题必填；没有计划或归属不确定时先保存为独立待办。"
+        case .createPlan: "新建计划：先预览名称、类型与待办，一次确认后创建。"
         case .scheduleExistingTask: "安排日期：只改「哪天做」，不动硬截止。"
         case .updateTask: "修改任务：只改原文里明确写出的字段。"
         case .matchOccurrence: "匹配重复项：只有唯一候选才会自动记录。"

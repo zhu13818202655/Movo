@@ -49,6 +49,12 @@ public struct ProcessCapture: DomainCommand {
                 Double(AudioRetention.retentionHours) * 3600)
         }
         let existing = await context.repository.capture(entityID)
+        if let existing {
+            capture.rawText = existing.rawText
+            capture.capturedAt = existing.capturedAt
+            capture.timezoneID = existing.timezoneID
+            capture.audioExpiresAt = existing.audioExpiresAt
+        }
         let saved = try await context.write(capture, old: existing)
         context.setUserMessage("原文已保存。")
         return CommandResult(operationID: operationID, entityID: saved.id,

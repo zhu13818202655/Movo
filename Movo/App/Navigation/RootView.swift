@@ -9,6 +9,9 @@
 
 import SwiftUI
 import MovoKit
+#if os(iOS)
+import UIKit
+#endif
 
 public struct RootView: View {
     @Environment(AppEnvironment.self) private var env
@@ -50,8 +53,11 @@ public struct RootView: View {
 
 // MARK: - iPhone
 
+#if os(iOS)
 private struct PhoneShell: View {
     @Environment(\.movoRouter) private var router
+    @Environment(AppEnvironment.self) private var env
+    @State private var keyboardVisible = false
 
     var body: some View {
         @Bindable var router = router
@@ -63,13 +69,49 @@ private struct PhoneShell: View {
                 }
                 .tabItem { Label(section.title, systemImage: section.systemImage) }
                 .tag(section)
+                .toolbar(.hidden, for: .tabBar)
             }
         }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if !keyboardVisible {
+                HStack(spacing: 20) {
+                    HStack(spacing: 0) {
+                        ForEach(AppSection.phoneOrder) { section in
+                            Button { router.section = section } label: {
+                                VStack(spacing: 4) {
+                                    Image(systemName: section.systemImage).font(.system(size: 19))
+                                    Text(section.title).font(MovoFont.caption)
+                                }
+                                .frame(maxWidth: .infinity).frame(minHeight: 56)
+                                .foregroundStyle(router.section == section ? MovoColor.primary : MovoColor.muted)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityAddTraits(router.section == section ? [.isSelected] : [])
+                        }
+                    }
+                    .background(MovoColor.tint, in: RoundedRectangle(cornerRadius: 22))
+                    Button { router.present(.quickCapture) } label: {
+                        VStack(spacing: 1) {
+                            Image(systemName: env.isProcessing ? "ellipsis" : "sparkles")
+                            Text("AI").font(.caption2)
+                        }
+                        .foregroundStyle(.white).frame(width: 56, height: 56)
+                        .background(MovoColor.primary, in: Circle())
+                    }
+                    .buttonStyle(.plain).accessibilityLabel("AI 整理")
+                }
+                .padding(.horizontal, MovoSpace.m).padding(.vertical, MovoSpace.s)
+                .background(MovoColor.bg)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardVisible = true }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardVisible = false }
         .sheet(item: Binding(get: { router.sheet }, set: { router.sheet = $0 })) { route in
             SheetHost(route: route)
         }
     }
 }
+#endif
 
 // MARK: - Mac
 
@@ -165,6 +207,8 @@ private struct SheetHost: View {
 
     var body: some View {
         ScreenHost(route: route)
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
             #if os(macOS)
             .frame(minWidth: 420, minHeight: 420)
             #endif

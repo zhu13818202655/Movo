@@ -202,6 +202,48 @@ final class AdapterTests: XCTestCase {
 
     // MARK: - 解码夹具（8.3 / 6.5 Schema）
 
+    func testRequestIncludesTheActualOutputContract() async throws {
+        let keyStore = InMemoryAIKeyStore()
+        try keyStore.save("fictional-test-key", vendor: .deepseek)
+        let response = try chatEnvelope(content: Self.singleCreateTaskJSON)
+        MockURLProtocol.responder = { (200, response) }
+        let adapter = try makeDeepSeekAdapter(keyStore: keyStore, transport: makeTransport())
+        let input = AIInput(locale: "zh-Hans", timezone: "Asia/Shanghai", today: "2026-09-30",
+                            text: "明天下午三点前交周报", plans: [], tasks: [], instructions: AIContextBuilder.instructions)
+        _ = try await adapter.proposeOperations(input)
+        let body = try XCTUnwrap(MockURLProtocol.lastRequestBody)
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let messages = try XCTUnwrap(root["messages"] as? [[String: Any]])
+        let system = try XCTUnwrap(messages.first?["content"] as? String)
+        XCTAssertTrue(system.contains("JSON Schema"))
+        XCTAssertTrue(system.contains("source_span"))
+        XCTAssertTrue(system.contains("scheduled_date"))
+        XCTAssertTrue(system.contains("create_plan"))
+        XCTAssertTrue(system.contains("required"))
+        XCTAssertFalse(system.contains("fictional-test-key"))
+    }
+
+    func testDecodePlanWithInitialTasksAndRejectUnknownKind() throws {
+        let json = """
+        {"schema_version":1,"items":[{"action":"create_plan","source_span":"建立搬家计划",
+        "span":[0,6],"plan":{"name":"搬家","kind":"delivery","tasks":[{"title":"整理物品"}]},
+        "needs_confirmation":true,"confidence":0.9}]}
+        """
+        let item = try XCTUnwrap(AIProposalCoding.decode(json)?.items.first)
+        XCTAssertEqual(item.action, .createPlan)
+        XCTAssertEqual(item.plan?.tasks.first?.title, "整理物品")
+        XCTAssertEqual(item.plan?.kind, .delivery)
+        let malformed = AIProposalCoding.decode(json.replacingOccurrences(of: "delivery", with: "unknown_kind"))
+        XCTAssertNil(malformed?.items.first?.plan, "未知计划类型不能猜测")
+    }
+
+    func testMissingSpanRequiresExactSourceForLocalValidation() throws {
+        let valid = #"{"items":[{"action":"create_task","source_span":"买牛奶","task":{"title":"买牛奶"}}]}"#
+        XCTAssertNotNil(AIProposalCoding.decode(valid))
+        let invalid = #"{"items":[{"action":"create_task","task":{"title":"买牛奶"}}]}"#
+        XCTAssertNil(AIProposalCoding.decode(invalid))
+    }
+
     func testDecodeSingleCreateTask() throws {
         let proposal = try XCTUnwrap(AIProposalCoding.decode(Self.singleCreateTaskJSON))
         XCTAssertEqual(proposal.schemaVersion, 1)

@@ -36,13 +36,14 @@ public enum AIProposalCoding {
                   let action = AIAction(rawValue: actionRaw) else { return nil }
 
             let span = (object["span"].flatMap { intArray($0) }) ?? []
-            guard span.count == 2 else { return nil }
+            guard span.count == 2 || !(object["source_span"]?.stringValue ?? "").isEmpty else { return nil }
 
             items.append(AIProposalItem(
                 sourceSpan: object["source_span"]?.stringValue,
                 span: span,
                 action: action,
                 task: decodeTask(object["task"]),
+                plan: decodePlan(object["plan"]),
                 dateInterpretation: decodeDateInterpretation(object["date_interpretation"]),
                 recurrence: decodeRecurrence(object["recurrence"]),
                 measurement: decodeMeasurement(object["measurement"]),
@@ -118,6 +119,23 @@ public enum AIProposalCoding {
             priority: o["priority"]?.stringValue,
             tags: stringArray(o["tags"]),
             dependencyIds: stringArray(o["dependency_ids"]))
+    }
+
+    static func decodePlan(_ value: JSONValue?) -> AIProposalPlan? {
+        guard case .object(let object)? = value,
+              let name = object["name"]?.stringValue,
+              let rawKind = object["kind"]?.stringValue,
+              let kind = PlanKind(rawValue: rawKind) else { return nil }
+        var tasks: [AIProposalTask] = []
+        if let rawTasks = object["tasks"] {
+            guard case .array(let values) = rawTasks else { return nil }
+            for value in values {
+                guard let task = decodeTask(value) else { return nil }
+                tasks.append(task)
+            }
+        }
+        return AIProposalPlan(name: name, kind: kind, goal: object["goal"]?.stringValue,
+                              targetDate: object["target_date"]?.stringValue, tasks: tasks)
     }
 
     static func decodeDateInterpretation(_ value: JSONValue?) -> AIDateInterpretation? {
@@ -263,17 +281,20 @@ public struct OpenAICompatibleAdapter: AIProvider {
     }
 
     static func requestBody(model: String, input: AIInput) -> Data? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        guard let schemaData = try? encoder.encode(AIProposalSchema.jsonSchema),
+              let schema = String(data: schemaData, encoding: .utf8) else { return nil }
+        let instructions = AIContextBuilder.instructions + "\n仅返回符合以下 JSON Schema 的 JSON 对象，不要返回说明或 Markdown。可选字段无值时省略。\n" + schema
         let payload: JSONValue = .object([
             "model": .string(model),
             "temperature": .int(0),
             "response_format": .object(["type": .string("json_object")]),
             "messages": .array([
-                .object(["role": .string("system"), "content": .string(AIContextBuilder.instructions)]),
+                .object(["role": .string("system"), "content": .string(instructions)]),
                 .object(["role": .string("user"), "content": .string(input.requestBodyJSONString())])
             ])
         ])
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         return try? encoder.encode(payload)
     }
 

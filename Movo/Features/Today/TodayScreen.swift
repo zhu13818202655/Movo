@@ -9,8 +9,8 @@ public struct TodayScreen: View {
     @State private var showCompleted = false
     @State private var nodes: [TodoNode] = []
     @State private var today: TodayView?
-    @State private var title = ""
-    @State private var saving = false
+    @State private var adding = false
+    @State private var savedOutsideFilter: UUID?
     @State private var loaded = false
     @State private var error: String?
 
@@ -25,32 +25,26 @@ public struct TodayScreen: View {
                     MovoIconButton("magnifyingglass", label: "搜索") { router.select(.search) }
                 }
             }
-            VStack(alignment: .leading, spacing: MovoSpace.s) {
-                HStack {
-                    TextField("添加待办…", text: $title)
-                        .textFieldStyle(.plain).font(MovoFont.body)
-                        .onSubmit { _Concurrency.Task { await add() } }
-                        .accessibilityLabel("待办标题")
-                    MovoButton("添加", isEnabled: !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                               isLoading: saving) { _Concurrency.Task { await add() } }
-                }
-                HStack(spacing: MovoSpace.m) {
-                    MovoButton("详细创建", systemImage: "plus", kind: .quiet) {
-                        router.present(.newTask(planID: nil, parentID: nil, scheduledToday: filter == .today))
-                    }
-                    MovoButton("AI 整理", systemImage: "sparkles", kind: .quiet) { router.present(.quickCapture) }
-                    MovoIconButton("mic", label: "语音整理") { router.present(.recording) }
-                    Spacer(minLength: 0)
-                }
-                if let error { Text(error).font(MovoFont.caption).foregroundStyle(.red) }
-            }
-            .padding(MovoSpace.m)
-            .background(MovoColor.surface, in: RoundedRectangle(cornerRadius: MovoRadius.card))
+            #if os(macOS)
+            AICaptureQuickEntry()
+            #endif
 
             Picker("待办范围", selection: $filter) {
                 ForEach(TodoFilter.allCases) { item in Text(item.title).tag(item) }
             }
             .pickerStyle(.segmented)
+            if adding {
+                InlineTaskEditor(scheduledToday: filter == .today, onSaved: { id in
+                    _Concurrency.Task { await checkSavedTask(id) }
+                }, onCancel: { adding = false })
+            } else {
+                MovoButton("添加待办", systemImage: "plus", kind: .quiet) { adding = true }
+            }
+            if let id = savedOutsideFilter {
+                MovoBanner(kind: .info, title: "待办已添加", message: "这项待办不在当前筛选内。",
+                           actions: [("查看待办", { router.push(.taskDetail(id)) })])
+            }
+            if let error { Text(error).font(MovoFont.caption).foregroundStyle(.red) }
             Toggle("显示已完成", isOn: $showCompleted)
                 .toggleStyle(.switch).font(MovoFont.caption)
 
@@ -62,7 +56,7 @@ public struct TodayScreen: View {
                 if nodes.isEmpty {
                     MovoEmptyState(systemImage: "checklist", title: "这里还没有待办",
                                    message: emptyMessage, actionTitle: "新建待办", action: {
-                        router.present(.newTask(planID: nil, parentID: nil, scheduledToday: false))
+                        adding = true
                     })
                     .frame(minHeight: 220)
                 } else {
@@ -98,7 +92,7 @@ public struct TodayScreen: View {
         if nodes.isEmpty && recurring.isEmpty {
             MovoEmptyState(systemImage: "sun.max", title: "今天还没有安排", message: emptyMessage,
                            actionTitle: "安排一项待办", action: {
-                router.present(.newTask(planID: nil, parentID: nil, scheduledToday: true))
+                adding = true
             })
         }
         if !nodes.isEmpty { SectionBlock("今天的待办", trailing: "含逾期与进行中") { TaskOutline(nodes: nodes) } }
@@ -121,16 +115,13 @@ public struct TodayScreen: View {
         }
     }
 
-    private func add() async {
-        guard !saving, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        saving = true
-        defer { saving = false }
-        let draft = title
-        if await env.quickAddTask(title: draft, scheduledToday: filter == .today) != nil {
-            if title == draft { title = "" }
-            error = nil
-            if filter == .upcoming { filter = .unscheduled }
-        } else { error = env.lastError?.localizedDescription ?? "没有添加成功，请重试。" }
+    private func checkSavedTask(_ id: UUID) async {
+        let current = await env.store.todos(filter: filter, includeCompleted: showCompleted)
+        func contains(_ nodes: [TodoNode]) -> Bool {
+            nodes.contains { $0.id == id || contains($0.children) }
+        }
+        savedOutsideFilter = contains(current) ? nil : id
+        await reload()
     }
 
     private func reload() async {

@@ -1,208 +1,282 @@
-//
-//  AppEnvironment+Capture.swift
-//  App
-//
-//  6.1 输入管线：C1 落库 → C2 隐私分流 → C3 本地直执 → C4 上下文 → C5 调用
-//  → C6 校验 → C7 策略 → C8 提交 → C9 结果态。任何一步失败，原文已持久化（REQ 02）。
-//
-
 import Foundation
 import MovoKit
 
 @MainActor
 public extension AppEnvironment {
-
-    // MARK: - C1 落库
-
-    /// 保存原文并返回 captureID。幂等：同一 batch 重试复用同一 id（C10）。
     @discardableResult
-    func submitCapture(text: String, editedText: String? = nil,
-                       inputMode: InputMode = .text,
+    func submitCapture(text: String, editedText: String? = nil, inputMode: InputMode = .text,
                        audioRetention: AudioRetention = .none) async -> UUID? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        let id = UUID()
         do {
-            let result = try await store.execute(ProcessCapture(
-                id: id, rawText: trimmed, editedText: editedText,
-                inputMode: inputMode, state: .saved, audioRetention: audioRetention))
+            let result = try await store.execute(ProcessCapture(rawText: trimmed, editedText: editedText,
+                                                               inputMode: inputMode, audioRetention: audioRetention))
             activeCaptureID = result.entityID
+            capturePreferences?.set(result.entityID?.uuidString, forKey: "movo.capture.active")
             lastError = nil
             return result.entityID
-        } catch let error as MovoError {
-            lastError = error
-            return nil
-        } catch {
-            lastError = .invalidStructure(reason: "原文没有保存成功。")
-            return nil
-        }
+        } catch { recordCaptureError(error) }
+        return nil
     }
 
-    /// 更新 capture 状态（C9）。使用新的 operationID，避免幂等缓存拦截。
+    /// 与浮层生命周期分开；收起浮层不会取消整理。
+    func submitCaptureDraft() async {
+        guard !isSubmittingCapture, !isProcessing,
+              !captureText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        isSubmittingCapture = true
+        defer { isSubmittingCapture = false }
+        let text = captureText
+        let planID = capturePlanID
+        guard let id = await submitCapture(text: text, inputMode: captureInputMode) else { return }
+        capturePreferences?.set(planID?.uuidString, forKey: "movo.capture.selectedPlan.\(id)")
+        if captureText == text { captureText = "" }
+        await processCapture(id, preferredPlanID: planID)
+    }
+
+    func continueCapturing() {
+        guard !isProcessing else { return }
+        activeCaptureID = nil
+        capturePreferences?.removeObject(forKey: "movo.capture.active")
+        captureInputMode = .text
+        lastError = nil
+    }
+
+    @discardableResult
     func updateCaptureState(_ captureID: UUID, state: CaptureState,
-                            batchID: UUID? = nil) async {
-        guard let capture = await store.repository.capture(captureID) else { return }
-        _ = try? await store.execute(ProcessCapture(
-            id: captureID, rawText: capture.rawText, editedText: capture.editedText,
-            inputMode: capture.inputMode, state: state, batchID: batchID ?? capture.batchId,
-            audioRetention: capture.audioRetention))
+                            batchID: UUID? = nil, editedText: String? = nil) async -> Bool {
+        guard let capture = await store.repository.capture(captureID) else { return false }
+        do {
+            _ = try await store.execute(ProcessCapture(
+                id: captureID, rawText: capture.rawText, editedText: editedText ?? capture.editedText,
+                inputMode: capture.inputMode, segments: capture.segments, state: state,
+                batchID: batchID ?? capture.batchId, audioRetention: capture.audioRetention))
+            return true
+        } catch { recordCaptureError(error); return false }
     }
 
-    // MARK: - C2–C9 整理
-
-    /// 执行完整整理管线。产出写入 `lastPreparation`，错误写入 `lastError`。
-    func processCapture(_ captureID: UUID, vendor: AIVendor? = nil, model: String? = nil) async {
+    func processCapture(_ captureID: UUID, vendor: AIVendor? = nil, model: String? = nil,
+                        preferredPlanID: UUID? = nil, applyAutomaticCommands: Bool = true) async {
+        guard !isProcessing else { return }
         guard let capture = await store.repository.capture(captureID) else {
             lastError = .notFound(entityType: .capture, id: captureID)
             return
         }
+        if let batch = await store.repository.batch(CaptureCommand.batchID(for: captureID)), batch.state == .undone {
+            var preparation = ProposalPreparation(captureID: captureID,
+                privacy: PrivacySplitter.split(text: "", plans: [], healthKeywords: []))
+            preparation.undoSummary = batch.summary
+            await finishCapture(captureID, preparation: preparation)
+            return
+        }
         isProcessing = true
+        activeCaptureID = captureID
+        lastError = nil
         defer { isProcessing = false }
+        guard await updateCaptureState(captureID, state: .processing) else { return }
 
-        await updateCaptureState(captureID, state: .processing)
-
-        // 组装请求快照
-        let plans = await store.repository.allPlans()
-        let allTasks = await store.repository.allTasks()
-        var tasksByPlan: [UUID: [Task]] = [:]
+        let deleted = Set(await store.repository.tombstones(activeOnly: true).map(\.entityId))
+        let plans = await store.repository.allPlans().filter { !deleted.contains($0.id) }
+        let allTasks = await store.repository.allTasks().filter { !deleted.contains($0.id) }
+        var tasksByPlan: [UUID: [MovoKit.Task]] = [:]
         for task in allTasks {
-            if let planID = task.planId { tasksByPlan[planID, default: []].append(task) }
+            if let id = task.planId { tasksByPlan[id, default: []].append(task) }
         }
-        var stagesByPlan: [UUID: [Stage]] = [:]
+        var stages: [UUID: [Stage]] = [:]
+        var metrics: [UUID: [PlanMetric]] = [:]
+        var occurrences: [UUID: [RecurrenceOccurrence]] = [:]
         for plan in plans {
-            stagesByPlan[plan.id] = await store.repository.stages(planID: plan.id)
+            stages[plan.id] = await store.repository.stages(planID: plan.id)
+            metrics[plan.id] = await store.repository.metrics(planID: plan.id)
         }
-        var metricsByPlan: [UUID: [PlanMetric]] = [:]
-        for plan in plans {
-            metricsByPlan[plan.id] = await store.repository.metrics(planID: plan.id)
-        }
-        var occurrencesByTask: [UUID: [RecurrenceOccurrence]] = [:]
         for rule in await store.repository.rules() {
-            occurrencesByTask[rule.taskId] = await store.repository.occurrences(ruleID: rule.id)
+            occurrences[rule.taskId] = await store.repository.occurrences(ruleID: rule.id)
         }
-
-        let request = ProposalRequest(
-            captureID: captureID,
-            rawText: capture.rawText,
-            editedText: capture.editedText,
-            inputMode: capture.inputMode,
-            today: store.today,
-            timeZone: store.currentTimeZone,
-            localeIdentifier: "zh-Hans",
-            deviceId: store.deviceId,
-            source: capture.inputMode == .voice ? .voice : .text,
-            plans: plans, stagesByPlan: stagesByPlan, metricsByPlan: metricsByPlan,
-            tasksByPlan: tasksByPlan, occurrencesByTask: occurrencesByTask)
-
+        let selectedPlan = preferredPlanID ?? capturePreferences?
+            .string(forKey: "movo.capture.selectedPlan.\(captureID)").flatMap(UUID.init(uuidString:))
+        let request = ProposalRequest(captureID: captureID, rawText: capture.rawText,
+                                      editedText: capture.editedText, inputMode: capture.inputMode,
+                                      today: store.today, timeZone: store.currentTimeZone, deviceId: store.deviceId,
+                                      source: capture.inputMode == .voice ? .voice : .text, plans: plans,
+                                      stagesByPlan: stages, metricsByPlan: metrics, tasksByPlan: tasksByPlan,
+                                      occurrencesByTask: occurrences, preferredPlanID: selectedPlan)
         let target = vendor ?? self.vendor
         var preparation: ProposalPreparation
-
-        if isConfigured(for: target) {
+        if let proposal = savedProposals[captureID] {
+            preparation = await ProposalService(provider: SavedProposalProvider(proposal: proposal),
+                                                 defaults: defaults).prepare(request)
+            // 已建计划可能改变隐私匹配；不能把旧原文重新解释为新的本地完成指令。
+            preparation.localMatches.removeAll { $0.kind.isDeterministic }
+        } else if isConfigured(for: target) {
             do {
-                let service = try makeProposalService(vendor: vendor, model: model)
-                preparation = await service.prepare(request)
-            } catch let error as MovoError {
-                // 配置在提交后被改坏（例如自定义厂商的 Base URL 被清空）：降级本地整理
-                preparation = localOnlyPreparation(request)
-                preparation.error = error
+                preparation = await (try makeProposalService(vendor: vendor, model: model)).prepare(request)
+                recordUsage(preparation.usage)
             } catch {
                 preparation = localOnlyPreparation(request)
-                preparation.error = .aiFailed(stage: .unknown, cause: "provider")
+                preparation.error = error as? MovoError ?? .aiFailed(stage: .unknown, cause: "provider")
             }
         } else {
-            // 无 Key / 自定义厂商未填完：本地分流结果照常保留，整理稍后重试（7.3）
             preparation = localOnlyPreparation(request)
             preparation.error = configurationError(for: target)
         }
 
-        lastPreparation = preparation
-        recordUsage(preparation.usage)
-
-        // C3 + C8：本地可确定项与自动项一次提交，可撤销
-        let autoCommands: [any DomainCommand] =
-            preparation.deterministicLocalMatches.compactMap(\.command) + preparation.autoCommands
-
-        if !autoCommands.isEmpty {
-            await apply(commands: autoCommands, captureID: captureID)
+        // 先保存提案再写命令；重试回放同一提案，不重新生成另一组任务。
+        if let proposal = preparation.proposal {
+            savedProposals[captureID] = proposal
+            do {
+                let data = try JSONEncoder().encode(savedProposals)
+                capturePreferences?.set(data, forKey: "movo.capture.proposals")
+            } catch { recordCaptureError(error); return }
         }
-
-        // C9 结果态
-        if let error = preparation.error {
-            lastError = error
-            let applied = store.lastNotification != nil
-            await updateCaptureState(captureID, state: applied ? .aiPartial : .aiFailed)
-        } else if preparation.needsConfirmation || !preparation.rejectedIssues.isEmpty {
-            await updateCaptureState(captureID, state: .aiPartial)
+        var commands: [any DomainCommand] = preparation.deterministicLocalMatches.compactMap { match in
+            guard let command = match.command else { return nil }
+            return CaptureCommand(command, captureID: captureID,
+                                  key: "local|\(match.kind.rawValue)|\(match.sourceText)")
+        }
+        commands += preparation.autoCommands.map { command in
+            CaptureCommand(command, captureID: captureID,
+                           key: "auto|\(preparation.validated.commandKeys[command.operationID] ?? command.operationID.uuidString)")
+        }
+        if applyAutomaticCommands {
+            if let result = await apply(commands: commands, captureID: captureID) {
+                preparation.commitRejections = result.rejected
+            } else if !commands.isEmpty {
+                preparation.error = lastError
+            }
         } else {
-            await updateCaptureState(captureID, state: .aiSucceeded)
+            for command in commands {
+                if await store.repository.operation(command.operationID) == nil {
+                    preparation.commitRejections.append(BatchRejection(operationID: command.operationID,
+                                                                    entityID: command.entityID,
+                                                                    reason: "这项内容尚未保存，可以重试整理。"))
+                }
+            }
         }
+        var pending: [PendingProposal] = []
+        for item in preparation.pendingProposals {
+            let operationID = CaptureCommand.stableID(captureID: captureID, key: "confirm|\(item.id)|0")
+            if await store.repository.operation(operationID) == nil { pending.append(item) }
+        }
+        preparation.validated.needsConfirmation = pending
+        await finishCapture(captureID, preparation: preparation)
     }
 
-    /// 无 Key / 离线时的本地分流：只做隐私拆分与本地直执（不发云）。
     func localOnlyPreparation(_ request: ProposalRequest) -> ProposalPreparation {
-        let excluded = Dictionary(request.plans.map { ($0.id, $0.excludedTerms) },
-                                  uniquingKeysWith: { a, _ in a })
-        let privacy = PrivacySplitter.split(text: request.effectiveText,
-                                            plans: request.plans,
-                                            healthKeywords: ConfigLoader.loadHealthKeywords(),
-                                            excludedTermsByPlan: excluded)
-        let tasks = request.tasksByPlan.values.flatMap { $0 }
-        let occurrences = request.occurrencesByTask.values.flatMap { $0 }
-        let matches = LocalDirectRouter.route(
-            privacy: privacy, plans: request.plans, tasks: tasks, occurrences: occurrences,
-            today: request.today, now: store.now, source: request.source,
-            captureID: request.captureID)
+        let excluded = Dictionary(request.plans.map { ($0.id, $0.excludedTerms) }, uniquingKeysWith: { a, _ in a })
+        let privacy = PrivacySplitter.split(text: request.effectiveText, plans: request.plans,
+                                            healthKeywords: ConfigLoader.loadHealthKeywords(), excludedTermsByPlan: excluded)
+        let matches = LocalDirectRouter.route(privacy: privacy, plans: request.plans,
+                                               tasks: request.tasksByPlan.values.flatMap { $0 },
+                                               occurrences: request.occurrencesByTask.values.flatMap { $0 },
+                                               today: request.today, now: store.now, source: request.source,
+                                               captureID: request.captureID)
         return ProposalPreparation(captureID: request.captureID, privacy: privacy,
                                    localMatches: matches, skippedCloudCall: true)
     }
 
-    /// C8 整批提交（幂等：同 operationId 重复提交直接返回首次结果）
     @discardableResult
     func apply(commands: [any DomainCommand], captureID: UUID? = nil,
                summary: String? = nil) async -> BatchResult? {
         guard !commands.isEmpty else { return nil }
-        let input = BatchInput(captureId: captureID, source: .ai, commands: commands,
-                               summary: summary ?? ExecutionPolicy.autoResultMessage(appliedCount: commands.count),
-                               deviceId: store.deviceId)
         do {
-            let result = try await store.executeBatchAllowingPartial(input)
-            lastBatchNotice = store.lastNotification
+            var remaining: [any DomainCommand] = []
+            for command in commands {
+                // 不重放已执行或已撤销的命令。
+                if await store.repository.operation(command.operationID) == nil { remaining.append(command) }
+            }
+            guard !remaining.isEmpty else { return BatchResult(batchID: captureID.map(CaptureCommand.batchID(for:)) ?? UUID()) }
+            let result = try await store.executeBatchAllowingPartial(BatchInput(
+                batchID: captureID.map(CaptureCommand.batchID(for:)) ?? UUID(), captureId: captureID, source: .ai, commands: remaining,
+                summary: summary ?? "AI 整理", deviceId: store.deviceId))
+            if !result.applied.isEmpty { lastBatchNotice = store.lastNotification }
             return result
-        } catch let error as MovoError {
-            lastError = error
-            return nil
-        } catch {
-            lastError = .invalidStructure(reason: "这批内容没有提交成功。")
-            return nil
+        } catch { recordCaptureError(error); return nil }
+    }
+
+    func acceptPendingProposals(_ pending: [PendingProposal], captureID: UUID? = nil) async {
+        guard let captureID, !isProcessing, var preparation = captureResults[captureID] else { return }
+        guard await store.repository.batch(CaptureCommand.batchID(for: captureID))?.state != .undone else { return }
+        isProcessing = true
+        lastError = nil
+        defer { isProcessing = false }
+        let tasks = Dictionary(await store.repository.allTasks().map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        var metrics: [UUID: PlanMetric] = [:]
+        for plan in await store.repository.allPlans() {
+            for metric in await store.repository.metrics(planID: plan.id) { metrics[metric.id] = metric }
+        }
+        let rules = Dictionary(await store.repository.rules().map { ($0.taskId, $0) }, uniquingKeysWith: { a, _ in a })
+        for item in pending where preparation.pendingProposals.contains(where: { $0.id == item.id }) {
+            let materialized = ProposalValidator.materialize(
+                item, tasks: tasks, metrics: metrics, rules: rules, timeZone: store.currentTimeZone,
+                today: store.today, source: .ai, captureID: captureID,
+                planID: CaptureCommand.stableID(captureID: captureID, key: "plan|\(item.id)"))
+            guard !materialized.isEmpty else {
+                lastError = .invalidStructure(reason: "这项建议信息不足，请编辑原文后重新整理。")
+                continue
+            }
+            let commands: [any DomainCommand] = materialized.enumerated().map {
+                CaptureCommand($0.element, captureID: captureID, key: "confirm|\(item.id)|\($0.offset)")
+            }
+            do {
+                // 一个新计划与其初始待办必须一起成功，不能留下半份计划。
+                _ = try await store.executeBatch(BatchInput(batchID: CaptureCommand.batchID(for: captureID), captureId: captureID,
+                                                           source: .ai, commands: commands,
+                                                           summary: item.affectedSummary, deviceId: store.deviceId))
+                preparation.validated.needsConfirmation.removeAll { $0.id == item.id }
+                lastBatchNotice = store.lastNotification
+            } catch { recordCaptureError(error) }
+        }
+        preparation.error = lastError
+        await finishCapture(captureID, preparation: preparation)
+    }
+
+    func restoreCaptureResult(_ captureID: UUID) async {
+        guard captureResults[captureID] == nil, !isProcessing,
+              let capture = await store.repository.capture(captureID) else { return }
+        let batch = await store.repository.batch(CaptureCommand.batchID(for: captureID))
+        if capture.state == .aiSucceeded || batch?.state == .undone {
+            var result = ProposalPreparation(captureID: captureID,
+                privacy: PrivacySplitter.split(text: "", plans: [], healthKeywords: []))
+            result.appliedOperations = await store.repository.operations(batchID: CaptureCommand.batchID(for: captureID)).filter { $0.status == .applied }
+            result.undoSummary = batch?.state == .undone ? batch?.summary : nil
+            captureResults[captureID] = result
+            lastPreparation = result
+            return
+        }
+        // 仅回放本机保存的提案，不在打开界面时发起新的付费请求。
+        if savedProposals[captureID] != nil {
+            await processCapture(captureID, applyAutomaticCommands: false)
+        } else {
+            var result = ProposalPreparation(captureID: captureID,
+                                             privacy: PrivacySplitter.split(text: "", plans: [], healthKeywords: []))
+            result.error = .invalidStructure(reason: "原文已保留，整理尚未完成。可以重试或手动处理。")
+            result.appliedOperations = await store.repository.operations(batchID: CaptureCommand.batchID(for: captureID)).filter { $0.status == .applied }
+            captureResults[captureID] = result
+            lastPreparation = result
+            if capture.state == .processing { _ = await updateCaptureState(captureID, state: .aiPartial) }
         }
     }
 
-    /// 用户确认后采纳待确认项（C8：一次确认，单 batch 提交）。
-    func acceptPendingProposals(_ pending: [PendingProposal], captureID: UUID? = nil) async {
-        guard !pending.isEmpty else { return }
-        let tasks = await store.repository.allTasks()
-        let taskIndex = Dictionary(tasks.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        var metricIndex: [UUID: PlanMetric] = [:]
-        for plan in await store.repository.allPlans() {
-            for metric in await store.repository.metrics(planID: plan.id) { metricIndex[metric.id] = metric }
+    func finishCapture(_ captureID: UUID, preparation: ProposalPreparation) async {
+        var result = preparation
+        result.appliedOperations = await store.repository.operations(batchID: CaptureCommand.batchID(for: captureID)).filter { $0.status == .applied }
+        if !result.privacyViolations.isEmpty {
+            result.error = .invalidStructure(reason: "部分内容受隐私设置限制，已留在本机，请到收件箱处理。")
         }
-        var ruleIndex: [UUID: RecurrenceRule] = [:]
-        for rule in await store.repository.rules() { ruleIndex[rule.taskId] = rule }
-
-        var commands: [any DomainCommand] = []
-        for item in pending {
-            commands += ProposalValidator.materialize(
-                item, tasks: taskIndex, metrics: metricIndex, rules: ruleIndex,
-                timeZone: store.currentTimeZone, today: store.today,
-                source: .ai, captureID: captureID)
-        }
-        guard !commands.isEmpty else { return }
-        await apply(commands: commands, captureID: captureID)
-        await updateCaptureStateIfNeeded(captureID)
+        let state: CaptureState = result.isPartial
+            ? (result.appliedOperations.isEmpty && result.error != nil ? .aiFailed : .aiPartial)
+            : (result.appliedOperations.isEmpty ? .saved : .aiSucceeded)
+        if !(await updateCaptureState(captureID, state: state, batchID: CaptureCommand.batchID(for: captureID))) { result.error = lastError }
+        captureResults[captureID] = result
+        lastPreparation = result
+        lastError = result.error
     }
 
     func updateCaptureStateIfNeeded(_ captureID: UUID?) async {
-        guard let captureID else { return }
-        await updateCaptureState(captureID, state: lastError == nil ? .aiSucceeded : .aiPartial)
+        guard let captureID, let result = captureResults[captureID] else { return }
+        await finishCapture(captureID, preparation: result)
+    }
+
+    func recordCaptureError(_ error: Error) {
+        lastError = error as? MovoError ?? .invalidStructure(reason: "内容没有保存成功，请重试。")
     }
 }

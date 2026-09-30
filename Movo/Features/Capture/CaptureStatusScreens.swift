@@ -53,7 +53,8 @@ public struct ProcessingScreen: View {
                 }
             }
             // 管线已由触发方启动；此处只等待结果
-            while env.isProcessing {
+            while env.isProcessing || env.captureResults[captureID] == nil {
+                guard !_Concurrency.Task.isCancelled else { return }
                 try? await _Concurrency.Task.sleep(for: .milliseconds(120))
             }
             timer?.cancel()
@@ -79,7 +80,8 @@ public struct ProcessingScreen: View {
 
     private func finish() {
         timer?.cancel()
-        let preparation = env.lastPreparation
+        let preparation = env.captureResults[captureID]
+        if case .processing = router.path(for: router.section).last { router.pop() }
         if let error = preparation?.error {
             // 「还没配置好」（无 Key / 自定义厂商没填完）不是整理失败：原文已保存，
             // 本地分流结果照常展示，由结果页的横幅给出「去设置页补全」的恢复入口（M02）。
@@ -92,8 +94,6 @@ public struct ProcessingScreen: View {
         } else {
             router.push(.captureResult(captureID: captureID))
         }
-        // 跳过 Processing 自身
-        if case .processing = router.path(for: router.section).last { router.pop() }
     }
 }
 
@@ -166,173 +166,233 @@ public struct CaptureFailedScreen: View {
 public struct CaptureResultScreen: View {
     @Environment(AppEnvironment.self) private var env
     @Environment(\.movoRouter) private var router
-
     let captureID: UUID
+    let embedded: Bool
     @State private var rawText = ""
-    @State private var showRaw = false
+    @State private var rows: [AppliedRow] = []
+    @State private var canUndo = false
+    @State private var localError: String?
 
-    public init(captureID: UUID) { self.captureID = captureID }
+    public init(captureID: UUID, embedded: Bool = false) {
+        self.captureID = captureID; self.embedded = embedded
+    }
 
-    private var preparation: ProposalPreparation? { env.lastPreparation }
+    private struct AppliedRow: Identifiable {
+        var id: UUID
+        var title: String
+        var detail: String
+        var action: String
+    }
+
+    private var preparation: ProposalPreparation? { env.captureResults[captureID] }
+    private var batchID: UUID { CaptureCommand.batchID(for: captureID) }
 
     public var body: some View {
         ScreenScroll {
-            let applied = preparation?.autoCommands.count ?? 0
-            let local = preparation?.deterministicLocalMatches.count ?? 0
-            let pending = preparation?.pendingProposals ?? []
-            let rejected = preparation?.rejectedIssues ?? []
-
-            ScreenChrome(headline(applied + local, pending: pending.count, rejected: rejected.count),
-                         subtitle: subtitle)
-
-            if let error = preparation?.error {
-                MovoBanner(error: error) { action in
-                    switch action {
-                    case .openSettings(let section): router.present(.settingsSection(section))
-                    case .editText: router.present(.quickCapture)
-                    case .retry: _Concurrency.Task { await env.processCapture(captureID) }
-                    case .viewInbox: router.go(to: .section(.inbox), in: .inbox)
-                    default: env.lastError = nil
-                    }
+            if let preparation {
+                ScreenChrome(headline(preparation), subtitle: preparation.resultMessage)
+                if let error = preparation.error {
+                    MovoBanner(error: error, onAction: recover)
                 }
-            }
-
-            if let preparation, !preparation.deterministicLocalMatches.isEmpty {
-                SectionBlock("在本机完成", trailing: "\(preparation.deterministicLocalMatches.count) 项") {
-                    resultList(preparation.deterministicLocalMatches.map {
-                        ($0.kind.displayName, $0.matchedTitle ?? $0.sourceText, $0.reason, false)
-                    })
+                if let localError {
+                    MovoBanner(kind: .warning, title: "操作未完成", message: localError)
                 }
-            }
-
-            if let preparation, !preparation.autoCommands.isEmpty {
-                SectionBlock("已整理", trailing: "\(preparation.autoCommands.count) 项") {
-                    resultList(preparation.autoCommands.map {
-                        ($0.kind.displayName, kindTitle($0.kind), "自动执行，可撤销", false)
-                    })
-                }
-            }
-
-            if !pending.isEmpty {
-                SectionBlock("需要你确认", trailing: "\(pending.count) 项") {
-                    VStack(alignment: .leading, spacing: MovoSpace.s) {
-                        ForEach(pending) { item in
-                            SuggestionCard(
-                                title: item.item.sourceSpan ?? item.kind.displayName,
-                                reason: item.item.reason ?? item.kind.displayName,
-                                lines: item.changeSummary,
-                                sourceText: nil,
-                                primaryTitle: "采纳",
-                                onPrimary: {
-                                    _Concurrency.Task {
-                                        await env.acceptPendingProposals([item], captureID: captureID)
-                                        router.push(.section(.today))
-                                    }
-                                },
-                                onDismiss: nil)
+                if !rows.isEmpty {
+                    SectionBlock("已完成", trailing: "\(rows.count) 项") {
+                        ForEach(rows) { row in
+                            HStack(alignment: .top, spacing: MovoSpace.s) {
+                                Image(systemName: "checkmark.circle.fill").foregroundStyle(MovoColor.done)
+                                VStack(alignment: .leading, spacing: MovoSpace.xs) {
+                                    Text(row.title).font(MovoFont.bodyEmphasis)
+                                    Text(row.action + (row.detail.isEmpty ? "" : " · " + row.detail))
+                                        .font(MovoFont.caption).foregroundStyle(MovoColor.muted)
+                                }
+                                Spacer(minLength: 0)
+                            }.padding(MovoSpace.s)
                         }
                     }
-                    .padding(MovoSpace.s)
                 }
-            }
-
-            if !rejected.isEmpty {
-                SectionBlock("需要补充信息", trailing: "\(rejected.count) 项") {
-                    resultList(rejected.map {
-                        ($0.sourceSpan ?? "未识别", $0.reasons.map(\.description).joined(separator: "；"),
-                         $0.suggestedAction ?? "去收件箱处理", true)
-                    })
+                if preparation.undoSummary == nil && !preparation.pendingProposals.isEmpty {
+                    SectionBlock("需要你确认") {
+                        VStack(alignment: .leading, spacing: MovoSpace.m) {
+                            ForEach(preparation.pendingProposals) { item in
+                                SuggestionCard(
+                                    title: item.affectedSummary,
+                                    reason: item.kind == .planCreation
+                                        ? "确认后建立计划及以下待办。云 AI 与同步许可保持关闭，可在计划设置中分别开启。"
+                                        : item.item.reason ?? item.kind.displayName,
+                                    lines: item.changeSummary, sourceText: item.item.sourceSpan,
+                                    primaryTitle: item.kind == .planCreation ? "确认并创建" : "确认应用",
+                                    onPrimary: {
+                                        _Concurrency.Task { await env.acceptPendingProposals([item], captureID: captureID) }
+                                    }, onDismiss: nil)
+                            }
+                        }.padding(MovoSpace.s)
+                    }
                 }
-            }
-
-            SectionBlock("原文") {
+                if !preparation.rejectedIssues.isEmpty || !preparation.commitRejections.isEmpty {
+                    SectionBlock("尚未应用") {
+                        VStack(alignment: .leading, spacing: MovoSpace.s) {
+                            ForEach(preparation.rejectedIssues) { item in
+                                Text(item.sourceSpan ?? "未识别的内容").font(MovoFont.bodyEmphasis)
+                                Text(item.reasons.map(\.description).joined(separator: "；"))
+                                    .font(MovoFont.caption).foregroundStyle(MovoColor.muted)
+                            }
+                            ForEach(preparation.commitRejections, id: \.operationID) { item in
+                                Text(item.reason).font(MovoFont.body)
+                            }
+                        }.padding(MovoSpace.s)
+                    }
+                }
+                let local = preparation.localMatches.filter { !$0.kind.isDeterministic }
+                if !local.isEmpty {
+                    SectionBlock("留在本机，待处理") {
+                        ForEach(Array(local.enumerated()), id: \.offset) { entry in
+                            VStack(alignment: .leading, spacing: MovoSpace.xs) {
+                                Text(entry.element.sourceText)
+                                Text(entry.element.reason).font(MovoFont.caption).foregroundStyle(MovoColor.muted)
+                            }.padding(MovoSpace.s)
+                        }
+                    }
+                }
+                if !preparation.validated.corrections.isEmpty {
+                    Text(preparation.validated.corrections.joined(separator: "\n"))
+                        .font(MovoFont.caption).foregroundStyle(MovoColor.muted)
+                }
+                if let notice = preparation.validated.truncationNotice {
+                    MovoBanner(kind: .warning, title: "还有内容待整理", message: notice)
+                }
+                DisclosureGroup("查看原文") { Text(rawText).textSelection(.enabled) }
                 VStack(alignment: .leading, spacing: MovoSpace.s) {
-                    if showRaw {
-                        Text(rawText).font(MovoFont.body).foregroundStyle(MovoColor.ink)
-                            .fixedSize(horizontal: false, vertical: true)
+                    if preparation.undoSummary == nil && (preparation.error != nil || !preparation.commitRejections.isEmpty) {
+                        MovoButton("重试未完成的整理", isEnabled: !env.isProcessing) {
+                            _Concurrency.Task { await env.processCapture(captureID) }
+                        }
                     }
-                    MovoButton(showRaw ? "收起原文" : "查看原文", kind: .quiet) {
-                        showRaw.toggle()
+                    if preparation.isPartial {
+                        MovoButton("编辑未完成内容", kind: .secondary) { recover(.editText) }
+                        MovoButton("稍后到收件箱处理", kind: .secondary) {
+                            router.dismissSheet()
+                            router.select(.inbox)
+                        }
+                    }
+                    ViewThatFits(in: .horizontal) {
+                        HStack { resultActions }
+                        VStack(alignment: .leading) { resultActions }
                     }
                 }
-                .padding(MovoSpace.s)
-            }
-
-            HStack(spacing: MovoSpace.s) {
-                MovoButton("返回待办", kind: .primary) {
-                    router.go(to: .section(.today), in: .today)
-                }
-                if let batchID = env.lastBatchNotice?.batchID, env.lastBatchNotice?.canUndo == true {
-                    MovoButton("撤销", kind: .secondary) {
-                        _Concurrency.Task { await env.undoLastBatch() }
-                    }
-                    .id(batchID)
-                }
-                Spacer(minLength: 0)
+            } else {
+                LoadingPlaceholder("正在恢复整理结果…")
             }
         }
+        .disabled(env.isProcessing)
         .task {
-            if let capture = await env.store.repository.capture(captureID) {
-                rawText = capture.editedText ?? capture.rawText
-            }
+            await env.restoreCaptureResult(captureID)
+            await reload()
         }
-    }
-
-    private var subtitle: String {
-        if let preparation {
-            return preparation.resultMessage + "。已完成的处理不需要逐项确认。"
-        }
-        return "原文已经保存。"
-    }
-
-    private func headline(_ applied: Int, pending: Int, rejected: Int) -> String {
-        if applied == 0 && pending == 0 && rejected == 0 { return "没有可整理的内容" }
-        if pending > 0 || rejected > 0 { return "已整理 \(applied) 项" }
-        return "已整理 \(applied) 项"
-    }
-
-    private func kindTitle(_ kind: OperationKind) -> String {
-        switch kind {
-        case .createTask: "新增待办"
-        case .scheduleTask: "安排日期"
-        case .completeTask: "标记完成"
-        case .completeOccurrence: "完成这一次"
-        case .skipOccurrence: "跳过这一次"
-        case .logActivity: "记录一次行动"
-        case .recordMeasurement: "记录结果"
-        case .createNote: "保存想法"
-        case .createRecurrence, .changeRecurrence: "设置重复"
-        case .addDependency: "建议先后顺序"
-        case .createPlan: "新建计划"
-        case .createStage: "新建阶段"
-        case .createMetric: "新增结果指标"
-        default: kind.displayName
-        }
+        .task(id: env.store.dataVersion) { await reload() }
     }
 
     @ViewBuilder
-    private func resultList(_ rows: [(String, String, String, Bool)]) -> some View {
-        VStack(spacing: 0) {
-            ForEach(rows.indices, id: \.self) { index in
-                let row = rows[index]
-                HStack(alignment: .top, spacing: MovoSpace.s) {
-                    Image(systemName: row.3 ? "exclamationmark.circle" : "checkmark.circle.fill")
-                        .foregroundStyle(row.3 ? MovoColor.warning : MovoColor.done)
-                        .frame(width: 20)
-                    VStack(alignment: .leading, spacing: MovoSpace.xs) {
-                        Text(row.1).font(MovoFont.bodyEmphasis).foregroundStyle(MovoColor.ink)
-                            .fixedSize(horizontal: false, vertical: true)
-                        HStack(spacing: MovoSpace.xs) {
-                            MovoTag(row.0)
-                            Text(row.2).font(MovoFont.caption).foregroundStyle(MovoColor.muted)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                    Spacer(minLength: 0)
-                }
-                .padding(MovoSpace.s)
-                if index < rows.count - 1 { MovoDivider().padding(.leading, MovoSpace.m) }
+    private var resultActions: some View {
+        MovoButton("查看待办") { router.dismissSheet(); router.select(.today) }
+        if let plan = preparation?.appliedOperations.first(where: { $0.kind == .createPlan }) {
+            MovoButton("查看计划", kind: .secondary) {
+                router.dismissSheet()
+                router.go(to: .planDetail(plan.entityId), in: .plans)
             }
+        }
+        MovoButton("继续记录", kind: .secondary) {
+            env.continueCapturing()
+            if !embedded { router.present(.quickCapture) }
+        }
+        if canUndo {
+            MovoButton("撤销本次", kind: .quiet) {
+                _Concurrency.Task {
+                    do {
+                        let result = try await env.store.undo(batchID: batchID)
+                        if !result.unsafeOperations.isEmpty || !result.nonUndoableOperations.isEmpty {
+                            localError = result.summaryText
+                        }
+                        if env.lastBatchNotice?.batchID == batchID { env.clearNotice() }
+                        _ = await env.updateCaptureState(captureID, state: .saved)
+                        await reload()
+                    } catch { localError = error.localizedDescription }
+                }
+            }
+        }
+    }
+
+    private func headline(_ result: ProposalPreparation) -> String {
+        if result.undoSummary != nil { return "本次整理已撤销" }
+        let operations = result.appliedOperations
+        if operations.isEmpty {
+            if !result.pendingProposals.isEmpty { return "等待你确认" }
+            return result.error == nil ? "原文已保留，尚未创建事项" : "整理未完成"
+        }
+        let created = operations.filter { $0.kind == .createTask }.count
+        if created == operations.count { return "已添加 \(created) 项待办" }
+        return "已处理 \(operations.count) 项"
+    }
+
+    private func recover(_ action: RecoveryAction) {
+        switch action {
+        case .openSettings(let section): router.present(.settingsSection(section))
+        case .retry: _Concurrency.Task { await env.processCapture(captureID) }
+        case .viewInbox: router.dismissSheet(); router.select(.inbox)
+        case .editText:
+            let hasApplied = !(preparation?.appliedOperations.isEmpty ?? true)
+            env.continueCapturing()
+            env.captureText = hasApplied ? remainingSourceText : rawText
+            if !embedded { router.present(.quickCapture) }
+        default: break
+        }
+    }
+
+    private var remainingSourceText: String {
+        guard let preparation else { return rawText }
+        let applied = Set(preparation.appliedOperations.map(\.id))
+        var sources = preparation.localMatches.filter { !$0.kind.isDeterministic }.map(\.sourceText)
+        sources += preparation.rejectedIssues.compactMap(\.sourceSpan)
+        for item in preparation.proposal?.items ?? [] {
+            let confirmed = CaptureCommand.stableID(captureID: captureID, key: "confirm|\(item.id)|0")
+            let prefix = "\(item.action.rawValue)|\(item.id)|"
+            let keys = preparation.validated.commandKeys.values.filter { $0.hasPrefix(prefix) }
+            let savedAutomatically = !keys.isEmpty && keys.allSatisfy {
+                applied.contains(CaptureCommand.stableID(captureID: captureID, key: "auto|\($0)"))
+            }
+            if !applied.contains(confirmed), !savedAutomatically, let source = item.sourceSpan { sources.append(source) }
+        }
+        var seen: Set<String> = []
+        return sources.filter { seen.insert($0).inserted }.joined(separator: "\n")
+    }
+
+    private func reload() async {
+        if let capture = await env.store.repository.capture(captureID) { rawText = capture.effectiveText }
+        let operations = await env.store.repository.operations(batchID: batchID).filter { $0.status == .applied }
+        var result: [AppliedRow] = []
+        for operation in operations {
+            var title = operation.reason ?? operation.kind.displayName
+            var detail = ""
+            if operation.entityType == .task, let task = await env.store.repository.task(operation.entityId) {
+                title = task.title
+                detail = task.scheduledDate.map { "安排 \($0.displayString)" } ?? "未安排"
+                if let planID = task.planId, let plan = await env.store.repository.plan(planID) {
+                    detail += " · " + plan.name
+                } else { detail += " · 独立待办" }
+                if let deadline = task.hardDeadline { detail += " · 截止 \(deadline.dateOnly.displayString)" }
+            } else if operation.entityType == .plan, let plan = await env.store.repository.plan(operation.entityId) {
+                title = plan.name; detail = plan.kind.displayName
+            }
+            result.append(AppliedRow(id: operation.id, title: title, detail: detail, action: operation.kind.displayName))
+        }
+        rows = result
+        let batch = await env.store.repository.batch(batchID)
+        canUndo = batch?.isUndoable == true && !operations.isEmpty
+        if var preparation = env.captureResults[captureID] {
+            preparation.appliedOperations = operations
+            preparation.undoSummary = batch?.state == .undone ? batch?.summary : nil
+            env.captureResults[captureID] = preparation
         }
     }
 }

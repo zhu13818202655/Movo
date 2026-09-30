@@ -29,6 +29,7 @@ public struct ProposalRequest: Sendable {
     public var metricsByPlan: [UUID: [PlanMetric]]
     public var tasksByPlan: [UUID: [Task]]
     public var occurrencesByTask: [UUID: [RecurrenceOccurrence]]
+    public var preferredPlanID: UUID?
 
     public init(captureID: UUID? = nil,
                 rawText: String,
@@ -43,12 +44,13 @@ public struct ProposalRequest: Sendable {
                 stagesByPlan: [UUID: [Stage]] = [:],
                 metricsByPlan: [UUID: [PlanMetric]] = [:],
                 tasksByPlan: [UUID: [Task]] = [:],
-                occurrencesByTask: [UUID: [RecurrenceOccurrence]] = [:]) {
+                occurrencesByTask: [UUID: [RecurrenceOccurrence]] = [:], preferredPlanID: UUID? = nil) {
         self.captureID = captureID; self.rawText = rawText; self.editedText = editedText
         self.inputMode = inputMode; self.today = today; self.timeZone = timeZone
         self.localeIdentifier = localeIdentifier; self.deviceId = deviceId; self.source = source
         self.plans = plans; self.stagesByPlan = stagesByPlan; self.metricsByPlan = metricsByPlan
         self.tasksByPlan = tasksByPlan; self.occurrencesByTask = occurrencesByTask
+        self.preferredPlanID = preferredPlanID
     }
 
     /// 用户编辑过就用编辑后的文本（REQ 02：编辑不影响原文留存）
@@ -69,6 +71,10 @@ public struct ProposalPreparation: Sendable {
     public var skippedCloudCall: Bool
     public var privacyViolations: [String]
     public var error: MovoError?
+    /// 以下为提交后的事实，不以可执行命令数量冒充成功数量。
+    public var appliedOperations: [Operation] = []
+    public var commitRejections: [BatchRejection] = []
+    public var undoSummary: String?
 
     public init(captureID: UUID? = nil,
                 privacy: PrivacySplitResult,
@@ -109,20 +115,24 @@ public struct ProposalPreparation: Sendable {
 
     /// 部分完成：有错误、有待确认、或有需要补充信息的项
     public var isPartial: Bool {
-        error != nil || needsConfirmation || !rejectedIssues.isEmpty
+        if undoSummary != nil { return false }
+        return error != nil || needsConfirmation || !rejectedIssues.isEmpty || !commitRejections.isEmpty
+            || localMatches.contains { !$0.kind.isDeterministic } || validated.truncationNotice != nil
     }
 
     /// 结果条文案（C9 结果态）
     public var resultMessage: String {
-        let applied = autoCommands.count + deterministicLocalMatches.count
+        if let undoSummary { return undoSummary }
+        let applied = appliedOperations.count
         if error != nil {
             return applied > 0 ? "已整理 \(applied) 项，其余稍后可重试" : "原文已保存，稍后可重试"
         }
-        if needsConfirmation || !rejectedIssues.isEmpty {
+        if isPartial {
             return ExecutionPolicy.partialResultMessage(
                 appliedCount: applied,
                 pendingCount: pendingProposals.count,
-                rejectedCount: rejectedIssues.count)
+                rejectedCount: rejectedIssues.count + commitRejections.count
+                    + localMatches.filter { !$0.kind.isDeterministic }.count)
         }
         return ExecutionPolicy.autoResultMessage(appliedCount: applied)
     }
@@ -199,7 +209,7 @@ public struct ProposalService: Sendable {
         }
 
         // C4 上下文构建
-        let input = AIContextBuilder.build(sendableText: privacy.sendableText,
+        var input = AIContextBuilder.build(sendableText: privacy.sendableText,
                                            today: request.today,
                                            timeZone: request.timeZone,
                                            plans: request.plans,
@@ -209,6 +219,9 @@ public struct ProposalService: Sendable {
                                            occurrencesByTask: request.occurrencesByTask,
                                            defaults: defaults,
                                            localeIdentifier: request.localeIdentifier)
+        if let id = request.preferredPlanID, input.allowedPlanIDs.contains(id) {
+            input.instructions += "\n用户为本次新增待办指定了计划 plan_id=\(id.uuidString)。"
+        }
 
         // AC16 发送前二次断言
         let restrictedPlans = request.plans.filter { !$0.cloudAIEnabled || $0.status != .active }
@@ -229,7 +242,17 @@ public struct ProposalService: Sendable {
         // C5 调用模型
         let started = Date()
         do {
-            let proposal = try await provider.proposeOperations(input)
+            var proposal = try await provider.proposeOperations(input)
+            guard !proposal.isEmpty else {
+                throw MovoError.invalidStructure(reason: "AI 没有返回可处理的事项，尚未创建内容。原文已保留，可以重试或编辑。")
+            }
+            if let selected = request.preferredPlanID, input.allowedPlanIDs.contains(selected) {
+                for index in proposal.items.indices where proposal.items[index].action == .createTask {
+                    // 用户指定归属优先；不能把允许范围之外的 ID 引入请求或命令。
+                    proposal.items[index].task?.planId = selected.uuidString
+                    proposal.items[index].confidence = 1
+                }
+            }
             let elapsedMs = Int(Date().timeIntervalSince(started) * 1000)
 
             // C6 校验

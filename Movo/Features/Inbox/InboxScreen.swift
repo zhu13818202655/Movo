@@ -16,6 +16,7 @@ public struct InboxScreen: View {
 
     @State private var view: InboxView?
     @State private var plans: [PlanSummary] = []
+    @State private var partiallyAppliedCaptures: Set<UUID> = []
 
     public init() {}
 
@@ -28,14 +29,14 @@ public struct InboxScreen: View {
             }
         }
         .movoPageBackground()
-        .task { await reload() }
+        .task(id: env.store.dataVersion) { await reload() }
     }
 
     @ViewBuilder
     private func content(_ view: InboxView) -> some View {
         ScreenScroll {
             ScreenChrome("收件箱", subtitle: view.isEmpty ? "都处理完了" : "\(view.totalCount) 项待处理") {
-                MovoButton("手动记一件事", systemImage: "square.and.pencil", kind: .secondary) {
+                MovoButton("AI 整理", systemImage: "sparkles", kind: .secondary) {
                     router.present(.quickCapture)
                 }
             }
@@ -126,6 +127,7 @@ public struct InboxScreen: View {
 
     @ViewBuilder
     private func unclassifiedRow(_ item: InboxUnclassified) -> some View {
+        let partiallyApplied = item.captureId.map { partiallyAppliedCaptures.contains($0) } ?? false
         VStack(alignment: .leading, spacing: MovoSpace.s) {
             Text(item.sourceText)
                 .font(MovoFont.bodyEmphasis).foregroundStyle(MovoColor.ink)
@@ -142,6 +144,13 @@ public struct InboxScreen: View {
                     .font(MovoFont.caption).foregroundStyle(MovoColor.muted)
             }
 
+            if let captureID = item.captureId {
+                MovoButton("查看整理结果 / 继续处理", systemImage: "sparkles", kind: .secondary) {
+                    env.activeCaptureID = captureID
+                    router.present(.quickCapture)
+                }
+            }
+
             HStack(spacing: MovoSpace.s) {
                 Menu {
                     ForEach(plans) { plan in
@@ -154,10 +163,15 @@ public struct InboxScreen: View {
                 }
                 .menuStyle(.borderlessButton)
                 .frame(width: 110)
+                .disabled(partiallyApplied)
 
-                MovoButton("保留为想法", kind: .quiet) { _Concurrency.Task { await keepAsNote(item) } }
+                MovoButton("保留为想法", kind: .quiet, isEnabled: !partiallyApplied) { _Concurrency.Task { await keepAsNote(item) } }
                 MovoButton("标记已处理", kind: .quiet) { _Concurrency.Task { await markHandled(item) } }
                 Spacer(minLength: 0)
+            }
+            if partiallyApplied {
+                Text("部分事项已保存，请打开整理结果继续处理剩余内容。")
+                    .font(MovoFont.caption).foregroundStyle(MovoColor.muted)
             }
         }
         .padding(MovoSpace.s)
@@ -288,7 +302,16 @@ public struct InboxScreen: View {
     }
 
     private func reload() async {
-        view = await env.store.inbox()
+        let inbox = await env.store.inbox()
+        var applied: Set<UUID> = []
+        for capture in inbox.pendingCaptures {
+            if let batchID = capture.batchId,
+               await env.store.repository.operations(batchID: batchID).contains(where: { $0.status == .applied }) {
+                applied.insert(capture.id)
+            }
+        }
+        partiallyAppliedCaptures = applied
+        view = inbox
         plans = await env.store.plans(filter: PlanFilter(categories: [], statuses: [.active, .paused]))
     }
 

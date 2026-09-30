@@ -52,6 +52,14 @@ public final class Router: @unchecked Sendable {
     public func popToRoot() { paths[section] = [] }
 
     public func select(_ section: AppSection) {
+        #if os(iOS)
+        if !AppSection.phoneOrder.contains(section) {
+            sheet = nil
+            inspector = nil
+            paths[self.section, default: []].append(.section(section))
+            return
+        }
+        #endif
         self.section = section
         paths[section] = []
         inspector = nil
@@ -67,6 +75,13 @@ public final class Router: @unchecked Sendable {
 
     /// 深链：先切入口再压栈
     public func go(to route: Route, in section: AppSection) {
+        #if os(iOS)
+        if !AppSection.phoneOrder.contains(section) {
+            select(.today)
+            push(route)
+            return
+        }
+        #endif
         select(section)
         paths[section, default: []].append(route)
     }
