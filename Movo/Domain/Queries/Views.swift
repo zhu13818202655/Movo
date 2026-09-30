@@ -358,6 +358,17 @@ public struct PlanTreeNode: Identifiable, Hashable, Sendable {
         if case .task(let t) = kind { return t }
         return nil
     }
+
+    public var childProgress: (done: Int, total: Int)? {
+        guard let task, !children.isEmpty else { return nil }
+        var tasks = [task]
+        var pending = children
+        while let node = pending.popLast() {
+            if let child = node.task { tasks.append(child) }
+            pending.append(contentsOf: node.children)
+        }
+        return ProgressPolicy.groupRollup(parentID: task.id, tasks: tasks)
+    }
 }
 
 public struct PlanTreeView: Hashable, Sendable {

@@ -536,10 +536,10 @@
                     {
                       "type": "icon",
                       "id": "kr2Sp",
-                      "name": "sun",
+                      "name": "待办图标",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$primary"
                     },
@@ -548,7 +548,7 @@
                       "id": "EJYJK",
                       "name": "导航文字",
                       "fill": "$primary",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 15,
                       "fontWeight": "normal"
@@ -1182,7 +1182,7 @@
       "id": "umMAQ",
       "x": 920,
       "y": 1200,
-      "name": "D01 Mac 今日",
+      "name": "D01 Mac 待办",
       "clip": true,
       "width": 1440,
       "height": 960,
@@ -1256,17 +1256,17 @@
                   "id": "lKh1L",
                   "type": "ref",
                   "ref": "IhvMl",
-                  "name": "今日",
+                  "name": "待办",
                   "width": "fill_container",
                   "fill": "$tint",
                   "cornerRadius": 12,
                   "descendants": {
                     "kr2Sp": {
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "fill": "$primary"
                     },
                     "EJYJK": {
-                      "content": "今日",
+                      "content": "待办",
                       "fill": "$primary"
                     }
                   }
@@ -1539,7 +1539,7 @@
                   "id": "Yy8UA",
                   "name": "位置",
                   "fill": "$muted",
-                  "content": "今日",
+                  "content": "待办",
                   "fontFamily": "Noto Sans SC",
                   "fontSize": 14,
                   "fontWeight": "normal"
@@ -1558,11 +1558,11 @@
             },
             {
               "type": "frame",
-              "id": "P0XK9",
-              "name": "今日内容",
+              "id": "kT4LO",
+              "name": "待办内容",
               "width": "fill_container",
               "layout": "vertical",
-              "gap": 16,
+              "gap": 14,
               "padding": [
                 24,
                 72
@@ -1570,300 +1570,699 @@
               "children": [
                 {
                   "type": "text",
-                  "id": "tD8gk",
+                  "id": "V3ixX",
                   "name": "页面标题",
                   "fill": "$ink",
-                  "content": "今日",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "待办",
                   "fontFamily": "Noto Sans SC",
-                  "fontSize": 28,
-                  "fontWeight": "600"
+                  "fontSize": 30,
+                  "fontWeight": "normal"
                 },
                 {
                   "type": "text",
-                  "id": "qyOZV",
-                  "name": "页面副标题",
+                  "id": "FVrqv",
+                  "name": "日期",
                   "fill": "$muted",
-                  "content": "2026年9月28日，周一 · 慢慢来，也在向前",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "2026年9月30日，周三 · 先记下来，再慢慢完成",
                   "fontFamily": "Noto Sans SC",
-                  "fontSize": 15,
+                  "fontSize": 14,
                   "fontWeight": "normal"
                 },
                 {
                   "type": "frame",
-                  "id": "ebOrh",
-                  "name": "快速录入",
+                  "id": "u7i0oo",
+                  "name": "手动添加入口",
                   "width": "fill_container",
-                  "fill": "$surface",
-                  "cornerRadius": 16,
+                  "height": 82,
+                  "fill": "#FFFFFF",
+                  "cornerRadius": 12,
                   "stroke": "$line",
                   "strokeWidth": 1,
-                  "gap": 16,
-                  "padding": 20,
-                  "justifyContent": "space_between",
+                  "gap": 12,
+                  "padding": 18,
                   "alignItems": "center",
                   "children": [
                     {
                       "type": "text",
-                      "id": "DOoVO",
-                      "name": "输入提示",
+                      "id": "wBPbY",
+                      "name": "待办标题输入",
                       "fill": "$muted",
-                      "content": "记下一件事，或说说你的计划",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "添加待办…",
                       "fontFamily": "Noto Sans SC",
-                      "fontSize": 17,
+                      "fontSize": 15,
                       "fontWeight": "normal"
                     },
                     {
+                      "id": "SkXb2",
+                      "type": "ref",
+                      "ref": "ZFRF9",
+                      "name": "添加按钮",
+                      "x": 991,
+                      "y": 18,
+                      "enabled": true,
+                      "opacity": 1,
+                      "descendants": {
+                        "my5G1": {
+                          "content": "添加"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "RRvpZ",
+                  "name": "更多创建方式",
+                  "width": "fill_container",
+                  "gap": 32,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "X37OH",
+                      "name": "＋ 详细创建",
+                      "fill": "$primary",
+                      "content": "＋ 详细创建",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 14,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "TZWJ8",
+                      "name": "✧ AI 整理",
+                      "fill": "$primary",
+                      "content": "✧ AI 整理",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 14,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "GgEqY",
+                      "name": "语音整理",
+                      "fill": "$primary",
+                      "content": "语音整理",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 14,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "sV7r0",
+                  "name": "待办范围筛选",
+                  "width": "fill_container",
+                  "height": 40,
+                  "fill": "$soft",
+                  "cornerRadius": 8,
+                  "gap": 4,
+                  "padding": 4,
+                  "children": [
+                    {
                       "type": "frame",
-                      "id": "o43Zs",
-                      "name": "输入操作",
-                      "gap": 16,
+                      "id": "LkdSo",
+                      "name": "全部筛选",
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "fill": "$surface",
+                      "cornerRadius": 6,
+                      "justifyContent": "center",
                       "alignItems": "center",
                       "children": [
                         {
-                          "type": "icon",
-                          "id": "ySkSf",
-                          "name": "mic",
-                          "width": 24,
-                          "height": 24,
-                          "icon": "mic",
-                          "library": "lucide",
-                          "fill": "$primary"
-                        },
-                        {
-                          "type": "frame",
-                          "id": "q2R88p",
-                          "name": "添加",
+                          "type": "text",
+                          "id": "BVewc",
+                          "name": "全部标签",
                           "fill": "$primary",
-                          "cornerRadius": 12,
-                          "gap": 16,
-                          "padding": [
-                            12,
-                            18
-                          ],
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "rck0c",
-                              "name": "按钮文字",
-                              "fill": "#FFFFFF",
-                              "content": "添加",
-                              "fontFamily": "Noto Sans SC",
-                              "fontSize": 15,
-                              "fontWeight": "normal"
-                            }
-                          ]
+                          "content": "全部",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 14,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "e0CFyX",
+                      "name": "今日筛选",
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "fill": "$soft",
+                      "cornerRadius": 6,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "q1ixBZ",
+                          "name": "今日标签",
+                          "fill": "$muted",
+                          "content": "今日",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 14,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "JwKO4",
+                      "name": "即将筛选",
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "fill": "$soft",
+                      "cornerRadius": 6,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "Z8i07",
+                          "name": "即将标签",
+                          "fill": "$muted",
+                          "content": "即将",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 14,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "xcZMf",
+                      "name": "未安排筛选",
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "fill": "$soft",
+                      "cornerRadius": 6,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "r1krPY",
+                          "name": "未安排标签",
+                          "fill": "$muted",
+                          "content": "未安排",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 14,
+                          "fontWeight": "normal"
                         }
                       ]
                     }
                   ]
                 },
                 {
-                  "type": "frame",
-                  "id": "RxfzM",
-                  "name": "今日概况",
+                  "type": "text",
+                  "id": "sHPpy",
+                  "name": "完成项开关",
+                  "fill": "$muted",
+                  "textGrowth": "fixed-width",
                   "width": "fill_container",
-                  "gap": 16,
-                  "justifyContent": "space_between",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "a7Icl",
-                      "name": "数量",
-                      "fill": "$muted",
-                      "content": "3项待推进 · 2项已完成",
-                      "fontFamily": "Noto Sans SC",
-                      "fontSize": 14,
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "type": "text",
-                      "id": "zuwfV",
-                      "name": "安排入口",
-                      "fill": "$primary",
-                      "content": "安排今天",
-                      "fontFamily": "Noto Sans SC",
-                      "fontSize": 14,
-                      "fontWeight": "normal"
-                    }
-                  ]
+                  "content": "显示已完成  ○",
+                  "fontFamily": "Noto Sans SC",
+                  "fontSize": 13,
+                  "fontWeight": "normal"
                 },
                 {
                   "type": "frame",
-                  "id": "UzlmW",
-                  "name": "今天的重点",
+                  "id": "G1eEn",
+                  "name": "多级待办列表",
                   "width": "fill_container",
                   "layout": "vertical",
-                  "gap": 8,
                   "children": [
                     {
-                      "type": "text",
-                      "id": "akEI5",
-                      "name": "分区标题",
-                      "fill": "$ink",
-                      "content": "今天的重点",
-                      "fontFamily": "Noto Sans SC",
-                      "fontSize": 20,
-                      "fontWeight": "600"
-                    },
-                    {
-                      "id": "aT6Js",
-                      "type": "ref",
-                      "ref": "Q4Wfz",
-                      "name": "汇总区域差异",
+                      "type": "frame",
+                      "id": "nbkVn",
+                      "name": "准备季度汇报任务行",
                       "width": "fill_container",
-                      "fill": "$tint",
-                      "cornerRadius": 12,
-                      "descendants": {
-                        "LcJJY": {
-                          "icon": "circle-dot",
-                          "fill": "$muted"
+                      "stroke": "$line",
+                      "strokeWidth": {
+                        "bottom": 1
+                      },
+                      "gap": 12,
+                      "padding": [
+                        12,
+                        8
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "wQG2p",
+                          "name": "完成或展开",
+                          "fill": "$primary",
+                          "content": "▾",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 18,
+                          "fontWeight": "normal"
                         },
-                        "NofnM": {
-                          "content": "汇总区域差异"
+                        {
+                          "type": "frame",
+                          "id": "pLvee",
+                          "name": "任务标题与归属",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 4,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "miteM",
+                              "name": "任务标题",
+                              "fill": "$ink",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "准备季度汇报",
+                              "fontFamily": "Noto Sans SC",
+                              "fontSize": 15,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "M8jfh5",
+                              "name": "任务元信息",
+                              "fill": "$muted",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "季度工作汇报 · 子任务 0/3",
+                              "fontFamily": "Noto Sans SC",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
                         },
-                        "k908I": {
-                          "content": "工作 · 季度工作汇报  /  形成初稿 · 今天 · 进行中"
+                        {
+                          "type": "text",
+                          "id": "iQdB8",
+                          "name": "任务操作",
+                          "fill": "$muted",
+                          "content": "···",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 18,
+                          "fontWeight": "normal"
                         }
-                      }
+                      ]
                     },
                     {
-                      "type": "text",
-                      "id": "NOvFl",
-                      "name": "下一步",
-                      "fill": "$muted",
-                      "content": "下一步：核对其他区域的数据，补充差异说明。",
-                      "fontFamily": "Noto Sans SC",
-                      "fontSize": 14,
-                      "fontWeight": "normal"
+                      "type": "frame",
+                      "id": "di8uD",
+                      "name": "整理数据任务行",
+                      "width": "fill_container",
+                      "stroke": "$line",
+                      "strokeWidth": {
+                        "bottom": 1
+                      },
+                      "gap": 12,
+                      "padding": [
+                        12,
+                        8,
+                        12,
+                        36
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ZsRzA",
+                          "name": "完成或展开",
+                          "fill": "$primary",
+                          "content": "▾",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 18,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "m1Novt",
+                          "name": "任务标题与归属",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 4,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "TuQP7",
+                              "name": "任务标题",
+                              "fill": "$ink",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "整理数据",
+                              "fontFamily": "Noto Sans SC",
+                              "fontSize": 15,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "cFQEp",
+                              "name": "任务元信息",
+                              "fill": "$muted",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "子任务 0/2",
+                              "fontFamily": "Noto Sans SC",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "p91qG",
+                          "name": "任务操作",
+                          "fill": "$muted",
+                          "content": "···",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 18,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "PP9Ei",
+                      "name": "核对销售数据任务行",
+                      "width": "fill_container",
+                      "stroke": "$line",
+                      "strokeWidth": {
+                        "bottom": 1
+                      },
+                      "gap": 12,
+                      "padding": [
+                        12,
+                        8,
+                        12,
+                        64
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "XFwIz",
+                          "name": "完成或展开",
+                          "fill": "$primary",
+                          "content": "○",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 18,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "m8g16y",
+                          "name": "任务标题与归属",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 4,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "D8iMSL",
+                              "name": "任务标题",
+                              "fill": "$ink",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "核对销售数据",
+                              "fontFamily": "Noto Sans SC",
+                              "fontSize": 15,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "M01vl",
+                              "name": "任务元信息",
+                              "fill": "$muted",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "未安排",
+                              "fontFamily": "Noto Sans SC",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "e8M5i",
+                          "name": "任务操作",
+                          "fill": "$muted",
+                          "content": "···",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 18,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "tUHLH",
+                      "name": "补充区域差异说明任务行",
+                      "width": "fill_container",
+                      "stroke": "$line",
+                      "strokeWidth": {
+                        "bottom": 1
+                      },
+                      "gap": 12,
+                      "padding": [
+                        12,
+                        8,
+                        12,
+                        64
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "yHs7R",
+                          "name": "完成或展开",
+                          "fill": "$primary",
+                          "content": "○",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 18,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "k4YN1n",
+                          "name": "任务标题与归属",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 4,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "UXgSe",
+                              "name": "任务标题",
+                              "fill": "$ink",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "补充区域差异说明",
+                              "fontFamily": "Noto Sans SC",
+                              "fontSize": 15,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "IAwYQ",
+                              "name": "任务元信息",
+                              "fill": "$muted",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "安排 明天",
+                              "fontFamily": "Noto Sans SC",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "XkNcd",
+                          "name": "任务操作",
+                          "fill": "$muted",
+                          "content": "···",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 18,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ihSJ2",
+                      "name": "撰写汇报初稿任务行",
+                      "width": "fill_container",
+                      "stroke": "$line",
+                      "strokeWidth": {
+                        "bottom": 1
+                      },
+                      "gap": 12,
+                      "padding": [
+                        12,
+                        8,
+                        12,
+                        36
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "V2Uil",
+                          "name": "完成或展开",
+                          "fill": "$primary",
+                          "content": "○",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 18,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "htkyX",
+                          "name": "任务标题与归属",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 4,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "mEbpO",
+                              "name": "任务标题",
+                              "fill": "$ink",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "撰写汇报初稿",
+                              "fontFamily": "Noto Sans SC",
+                              "fontSize": 15,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "Lk9xm",
+                              "name": "任务元信息",
+                              "fill": "$muted",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "安排 10月2日",
+                              "fontFamily": "Noto Sans SC",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "Njras",
+                          "name": "任务操作",
+                          "fill": "$muted",
+                          "content": "···",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 18,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "p2MIw",
+                      "name": "买牛奶任务行",
+                      "width": "fill_container",
+                      "stroke": "$line",
+                      "strokeWidth": {
+                        "bottom": 1
+                      },
+                      "gap": 12,
+                      "padding": [
+                        12,
+                        8
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "cZqPM",
+                          "name": "完成或展开",
+                          "fill": "$primary",
+                          "content": "○",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 18,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "V7fRey",
+                          "name": "任务标题与归属",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 4,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "CwCrm",
+                              "name": "任务标题",
+                              "fill": "$ink",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "买牛奶",
+                              "fontFamily": "Noto Sans SC",
+                              "fontSize": 15,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "teq5W",
+                              "name": "任务元信息",
+                              "fill": "$muted",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "独立待办 · 未安排",
+                              "fontFamily": "Noto Sans SC",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "o5c11n",
+                          "name": "任务操作",
+                          "fill": "$muted",
+                          "content": "···",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 18,
+                          "fontWeight": "normal"
+                        }
+                      ]
                     }
                   ]
                 },
                 {
-                  "type": "frame",
-                  "id": "aTHqm",
-                  "name": "稍后再做",
+                  "type": "text",
+                  "id": "r5Ott",
+                  "name": "行内添加示例",
+                  "fill": "$primary",
+                  "textGrowth": "fixed-width",
                   "width": "fill_container",
-                  "layout": "vertical",
-                  "gap": 4,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "B12cXK",
-                      "name": "分区标题",
-                      "fill": "$ink",
-                      "content": "稍后再做",
-                      "fontFamily": "Noto Sans SC",
-                      "fontSize": 20,
-                      "fontWeight": "600"
-                    },
-                    {
-                      "id": "Y4XVV",
-                      "type": "ref",
-                      "ref": "Q4Wfz",
-                      "name": "晚饭后散步",
-                      "width": "fill_container",
-                      "cornerRadius": 0,
-                      "descendants": {
-                        "LcJJY": {
-                          "icon": "circle",
-                          "fill": "$muted"
-                        },
-                        "NofnM": {
-                          "content": "晚饭后散步"
-                        },
-                        "k908I": {
-                          "content": "健康 · 减重与生活习惯 · 今晚 · 每周3次，本周0/3"
-                        }
-                      }
-                    },
-                    {
-                      "id": "EHIPC",
-                      "type": "ref",
-                      "ref": "Q4Wfz",
-                      "name": "买牛奶",
-                      "width": "fill_container",
-                      "cornerRadius": 0,
-                      "descendants": {
-                        "LcJJY": {
-                          "icon": "circle",
-                          "fill": "$muted"
-                        },
-                        "NofnM": {
-                          "content": "买牛奶"
-                        },
-                        "k908I": {
-                          "content": "生活 · 独立待办 · 今天回家时"
-                        }
-                      }
-                    }
-                  ]
+                  "content": "＋ 添加子任务",
+                  "fontFamily": "Noto Sans SC",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
                 },
                 {
-                  "type": "frame",
-                  "id": "bmK8d",
-                  "name": "已完成",
+                  "type": "text",
+                  "id": "iETbe",
+                  "name": "创建反馈",
+                  "fill": "$primary",
+                  "textGrowth": "fixed-width",
                   "width": "fill_container",
-                  "layout": "vertical",
-                  "gap": 4,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "cwcKQ",
-                      "name": "折叠标题",
-                      "fill": "$muted",
-                      "content": "▾  已完成  2",
-                      "fontFamily": "Noto Sans SC",
-                      "fontSize": 17,
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "id": "POkUi",
-                      "type": "ref",
-                      "ref": "Q4Wfz",
-                      "name": "英语复习",
-                      "width": "fill_container",
-                      "cornerRadius": 0,
-                      "descendants": {
-                        "LcJJY": {
-                          "icon": "circle-check",
-                          "fill": "$primary"
-                        },
-                        "NofnM": {
-                          "content": "英语复习"
-                        },
-                        "k908I": {
-                          "content": "学习 · 英语备考 · 今天已记录30分钟"
-                        }
-                      }
-                    },
-                    {
-                      "id": "ZSCIb",
-                      "type": "ref",
-                      "ref": "Q4Wfz",
-                      "name": "阅读",
-                      "width": "fill_container",
-                      "cornerRadius": 0,
-                      "descendants": {
-                        "LcJJY": {
-                          "icon": "circle-check",
-                          "fill": "$primary"
-                        },
-                        "NofnM": {
-                          "content": "阅读"
-                        },
-                        "k908I": {
-                          "content": "生活 · 保持阅读 · 已记录15分钟，本周1/3次"
-                        }
-                      }
-                    }
-                  ]
-                },
-                {
-                  "id": "MGVBK",
-                  "type": "ref",
-                  "ref": "p17T4",
-                  "name": "整理完成提示",
-                  "width": "fill_container"
+                  "content": "已添加「买牛奶」                                      撤销",
+                  "fontFamily": "Noto Sans SC",
+                  "fontSize": 13,
+                  "fontWeight": "normal"
                 }
               ]
             }
@@ -1950,17 +2349,17 @@
                   "id": "np1x4",
                   "type": "ref",
                   "ref": "IhvMl",
-                  "name": "今日",
+                  "name": "待办",
                   "width": "fill_container",
                   "fill": "$soft",
                   "cornerRadius": 12,
                   "descendants": {
                     "kr2Sp": {
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "fill": "$muted"
                     },
                     "EJYJK": {
-                      "content": "今日",
+                      "content": "待办",
                       "fill": "$muted"
                     }
                   }
@@ -2264,7 +2663,7 @@
                   "width": "fill_container",
                   "height": "fill_container",
                   "layout": "vertical",
-                  "gap": 20,
+                  "gap": 10,
                   "padding": 32,
                   "children": [
                     {
@@ -2318,7 +2717,7 @@
                           "id": "pt43Y",
                           "name": "完成",
                           "fill": "$primary",
-                          "content": "已完成 3/7 项",
+                          "content": "已完成 3/8 项",
                           "fontFamily": "Noto Sans SC",
                           "fontSize": 15,
                           "fontWeight": "normal"
@@ -2381,6 +2780,16 @@
                           "fontWeight": "normal"
                         }
                       ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "qABcy",
+                      "name": "手动添加待办入口",
+                      "fill": "$primary",
+                      "content": "＋ 添加待办",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
                     },
                     {
                       "type": "frame",
@@ -2544,7 +2953,7 @@
                               "content": "形成初稿"
                             },
                             "fcYC6": {
-                              "content": "进行中 · 1/3完成"
+                              "content": "进行中 · 1/4完成"
                             }
                           }
                         },
@@ -2565,7 +2974,7 @@
                               "content": "整理分析"
                             },
                             "fcYC6": {
-                              "content": "进行中 · 1/2完成"
+                              "content": "子任务 1/3"
                             }
                           }
                         },
@@ -2608,13 +3017,61 @@
                           "fill": "$tint",
                           "descendants": {
                             "Zkw9o": {
-                              "icon": "circle-dot"
+                              "icon": "chevron-down"
                             },
                             "vDOlG": {
                               "content": "汇总区域差异"
                             },
                             "wvlfQ": {
-                              "content": "今天 · 进行中"
+                              "content": "子任务 0/2"
+                            }
+                          }
+                        },
+                        {
+                          "id": "a3fSXY",
+                          "type": "ref",
+                          "ref": "Yg2Ih",
+                          "name": "核对区域口径",
+                          "width": "fill_container",
+                          "padding": [
+                            10,
+                            12,
+                            10,
+                            84
+                          ],
+                          "descendants": {
+                            "Zkw9o": {
+                              "icon": "circle"
+                            },
+                            "vDOlG": {
+                              "content": "核对区域口径"
+                            },
+                            "wvlfQ": {
+                              "content": "未安排"
+                            }
+                          }
+                        },
+                        {
+                          "id": "CkyQT",
+                          "type": "ref",
+                          "ref": "Yg2Ih",
+                          "name": "补齐差异说明",
+                          "width": "fill_container",
+                          "padding": [
+                            10,
+                            12,
+                            10,
+                            84
+                          ],
+                          "descendants": {
+                            "Zkw9o": {
+                              "icon": "circle"
+                            },
+                            "vDOlG": {
+                              "content": "补齐差异说明"
+                            },
+                            "wvlfQ": {
+                              "content": "未安排"
                             }
                           }
                         },
@@ -2796,6 +3253,16 @@
                           "fontWeight": "normal"
                         }
                       ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "Im1b0",
+                      "name": "子任务与移动入口",
+                      "fill": "$primary",
+                      "content": "＋ 添加子任务       移动到…",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 14,
+                      "fontWeight": "normal"
                     },
                     {
                       "type": "frame",
@@ -3026,17 +3493,17 @@
                   "id": "R3f0y",
                   "type": "ref",
                   "ref": "IhvMl",
-                  "name": "今日",
+                  "name": "待办",
                   "width": "fill_container",
                   "fill": "$soft",
                   "cornerRadius": 12,
                   "descendants": {
                     "kr2Sp": {
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "fill": "$muted"
                     },
                     "EJYJK": {
-                      "content": "今日",
+                      "content": "待办",
                       "fill": "$muted"
                     }
                   }
@@ -3886,7 +4353,7 @@
       "id": "C3c7gH",
       "x": 920,
       "y": 2280,
-      "name": "M01 iPhone 今日",
+      "name": "M01 iPhone 待办",
       "clip": true,
       "width": 393,
       "height": 852,
@@ -3959,151 +4426,210 @@
         },
         {
           "type": "frame",
-          "id": "LQgFu",
-          "name": "今日内容",
+          "id": "QlFcX",
+          "name": "待办内容",
           "width": "fill_container",
           "height": "fill_container",
           "layout": "vertical",
-          "gap": 14,
+          "gap": 12,
           "padding": [
-            8,
-            20,
             12,
             20
           ],
           "children": [
             {
-              "type": "frame",
-              "id": "n3vhB",
-              "name": "今日标题栏",
-              "width": "fill_container",
-              "gap": 16,
-              "justifyContent": "space_between",
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "text",
-                  "id": "foHV3",
-                  "name": "标题",
-                  "fill": "$ink",
-                  "content": "今日",
-                  "fontFamily": "Noto Sans SC",
-                  "fontSize": 28,
-                  "fontWeight": "600"
-                },
-                {
-                  "type": "frame",
-                  "id": "eq2SH",
-                  "name": "顶部入口",
-                  "children": [
-                    {
-                      "type": "frame",
-                      "id": "W5cBo",
-                      "name": "inbox按钮",
-                      "width": 44,
-                      "height": 44,
-                      "layout": "vertical",
-                      "gap": 16,
-                      "justifyContent": "center",
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "icon",
-                          "id": "P1c8I",
-                          "name": "inbox",
-                          "width": 22,
-                          "height": 22,
-                          "icon": "inbox",
-                          "library": "lucide",
-                          "fill": "$muted"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "BQwRF",
-                      "name": "search按钮",
-                      "width": 44,
-                      "height": 44,
-                      "layout": "vertical",
-                      "gap": 16,
-                      "justifyContent": "center",
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "icon",
-                          "id": "f2yq46",
-                          "name": "search",
-                          "width": 22,
-                          "height": 22,
-                          "icon": "search",
-                          "library": "lucide",
-                          "fill": "$muted"
-                        }
-                      ]
-                    }
-                  ]
-                }
-              ]
-            },
-            {
               "type": "text",
-              "id": "M80Rjv",
-              "name": "日期",
-              "fill": "$muted",
-              "content": "2026年9月28日，周一",
+              "id": "pC2Nn",
+              "name": "页面标题",
+              "fill": "$ink",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "待办",
               "fontFamily": "Noto Sans SC",
-              "fontSize": 14,
+              "fontSize": 28,
               "fontWeight": "normal"
             },
             {
               "type": "frame",
-              "id": "W9t1U",
-              "name": "录入入口",
+              "id": "t5jEY7",
+              "name": "手动添加入口",
               "width": "fill_container",
               "fill": "$surface",
               "cornerRadius": 12,
               "stroke": "$line",
               "strokeWidth": 1,
-              "gap": 4,
-              "padding": [
-                8,
-                12
-              ],
+              "gap": 12,
+              "padding": 12,
               "alignItems": "center",
               "children": [
                 {
                   "type": "text",
-                  "id": "FcuPV",
-                  "name": "输入文字",
+                  "id": "G8iuQ",
+                  "name": "待办标题输入",
                   "fill": "$muted",
                   "textGrowth": "fixed-width",
                   "width": "fill_container",
-                  "content": "记下一件事，或说说你的计划",
+                  "content": "添加待办…",
                   "fontFamily": "Noto Sans SC",
                   "fontSize": 15,
                   "fontWeight": "normal"
                 },
                 {
+                  "id": "zIWak",
+                  "type": "ref",
+                  "ref": "ZFRF9",
+                  "name": "添加按钮",
+                  "x": 274,
+                  "y": 12,
+                  "enabled": true,
+                  "opacity": 1,
+                  "descendants": {
+                    "my5G1": {
+                      "content": "添加"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "xUIO5",
+              "name": "更多创建方式",
+              "width": "fill_container",
+              "gap": 20,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "wUBd8",
+                  "name": "＋ 详细创建",
+                  "fill": "$primary",
+                  "content": "＋ 详细创建",
+                  "fontFamily": "Noto Sans SC",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "DS2CY",
+                  "name": "✧ AI 整理",
+                  "fill": "$primary",
+                  "content": "✧ AI 整理",
+                  "fontFamily": "Noto Sans SC",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "vX0BY",
+                  "name": "语音整理",
+                  "fill": "$primary",
+                  "content": "语音整理",
+                  "fontFamily": "Noto Sans SC",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "leQTn",
+              "name": "待办范围筛选",
+              "width": "fill_container",
+              "height": 40,
+              "fill": "$soft",
+              "cornerRadius": 8,
+              "gap": 4,
+              "padding": 4,
+              "children": [
+                {
                   "type": "frame",
-                  "id": "i3MlMI",
-                  "name": "mic按钮",
-                  "width": 44,
-                  "height": 44,
-                  "layout": "vertical",
-                  "gap": 16,
+                  "id": "PZmbK",
+                  "name": "全部筛选",
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "fill": "$surface",
+                  "cornerRadius": 6,
                   "justifyContent": "center",
                   "alignItems": "center",
                   "children": [
                     {
-                      "type": "icon",
-                      "id": "qI9Te",
-                      "name": "mic",
-                      "width": 22,
-                      "height": 22,
-                      "icon": "mic",
-                      "library": "lucide",
-                      "fill": "$muted"
+                      "type": "text",
+                      "id": "Y8PT7o",
+                      "name": "全部标签",
+                      "fill": "$primary",
+                      "content": "全部",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 14,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "M26cHe",
+                  "name": "今日筛选",
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "fill": "$soft",
+                  "cornerRadius": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "YvUte",
+                      "name": "今日标签",
+                      "fill": "$muted",
+                      "content": "今日",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 14,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "paujv",
+                  "name": "即将筛选",
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "fill": "$soft",
+                  "cornerRadius": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "HVnGU",
+                      "name": "即将标签",
+                      "fill": "$muted",
+                      "content": "即将",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 14,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "hgiNC",
+                  "name": "未安排筛选",
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "fill": "$soft",
+                  "cornerRadius": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "U3WOc",
+                      "name": "未安排标签",
+                      "fill": "$muted",
+                      "content": "未安排",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 14,
+                      "fontWeight": "normal"
                     }
                   ]
                 }
@@ -4111,179 +4637,310 @@
             },
             {
               "type": "text",
-              "id": "K3dwg4",
-              "name": "数量",
+              "id": "ulaqB",
+              "name": "完成项开关",
               "fill": "$muted",
-              "content": "3项待推进 · 2项已完成",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "显示已完成  ○",
               "fontFamily": "Noto Sans SC",
               "fontSize": 13,
               "fontWeight": "normal"
             },
             {
               "type": "frame",
-              "id": "cjlCk",
-              "name": "重点",
+              "id": "YcRh0",
+              "name": "多级待办列表",
               "width": "fill_container",
               "layout": "vertical",
-              "gap": 4,
               "children": [
                 {
-                  "type": "text",
-                  "id": "svZuf",
-                  "name": "标题",
-                  "fill": "$ink",
-                  "content": "今天的重点",
-                  "fontFamily": "Noto Sans SC",
-                  "fontSize": 18,
-                  "fontWeight": "600"
+                  "type": "frame",
+                  "id": "dG3kC",
+                  "name": "准备季度汇报任务行",
+                  "width": "fill_container",
+                  "stroke": "$line",
+                  "strokeWidth": {
+                    "bottom": 1
+                  },
+                  "gap": 12,
+                  "padding": [
+                    12,
+                    8
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "mY0DI",
+                      "name": "完成或展开",
+                      "fill": "$primary",
+                      "content": "▾",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 18,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "uq4b6",
+                      "name": "任务标题与归属",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 4,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "KXsmP",
+                          "name": "任务标题",
+                          "fill": "$ink",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "准备季度汇报",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 15,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "QqYTk",
+                          "name": "任务元信息",
+                          "fill": "$muted",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "工作 · 子任务 0/3",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "sCm6x",
+                      "name": "任务操作",
+                      "fill": "$muted",
+                      "content": "···",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 18,
+                      "fontWeight": "normal"
+                    }
+                  ]
                 },
                 {
-                  "id": "A5sER7",
-                  "type": "ref",
-                  "ref": "Q4Wfz",
-                  "name": "汇总区域差异",
+                  "type": "frame",
+                  "id": "fWu2T",
+                  "name": "整理数据任务行",
                   "width": "fill_container",
-                  "fill": "$tint",
-                  "cornerRadius": 12,
-                  "descendants": {
-                    "LcJJY": {
-                      "icon": "circle-dot",
-                      "width": 24,
-                      "height": 24
+                  "stroke": "$line",
+                  "strokeWidth": {
+                    "bottom": 1
+                  },
+                  "gap": 12,
+                  "padding": [
+                    12,
+                    8
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "v0wpIm",
+                      "name": "完成或展开",
+                      "fill": "$primary",
+                      "content": "▾",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 18,
+                      "fontWeight": "normal"
                     },
-                    "k908I": {
-                      "content": "季度工作汇报 · 今天 · 进行中",
-                      "fontSize": 13
+                    {
+                      "type": "frame",
+                      "id": "ERtIY",
+                      "name": "任务标题与归属",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 4,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ug8AL",
+                          "name": "任务标题",
+                          "fill": "$ink",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "整理数据",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 15,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "Y77D3",
+                          "name": "任务元信息",
+                          "fill": "$muted",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "上级：准备季度汇报 · 子任务 0/2",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "naWd0",
+                      "name": "任务操作",
+                      "fill": "$muted",
+                      "content": "···",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 18,
+                      "fontWeight": "normal"
                     }
-                  }
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "uVrGG",
-              "name": "稍后再做",
-              "width": "fill_container",
-              "layout": "vertical",
-              "gap": 2,
-              "children": [
-                {
-                  "type": "text",
-                  "id": "WwUU1",
-                  "name": "标题",
-                  "fill": "$ink",
-                  "content": "稍后再做",
-                  "fontFamily": "Noto Sans SC",
-                  "fontSize": 18,
-                  "fontWeight": "600"
+                  ]
                 },
                 {
-                  "id": "JWkj4",
-                  "type": "ref",
-                  "ref": "Q4Wfz",
-                  "name": "晚饭后散步",
+                  "type": "frame",
+                  "id": "u00ppg",
+                  "name": "核对销售数据任务行",
                   "width": "fill_container",
-                  "descendants": {
-                    "LcJJY": {
-                      "width": 24,
-                      "height": 24,
-                      "icon": "circle"
+                  "stroke": "$line",
+                  "strokeWidth": {
+                    "bottom": 1
+                  },
+                  "gap": 12,
+                  "padding": [
+                    12,
+                    8
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "px0G0",
+                      "name": "完成或展开",
+                      "fill": "$primary",
+                      "content": "○",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 18,
+                      "fontWeight": "normal"
                     },
-                    "NofnM": {
-                      "content": "晚饭后散步"
+                    {
+                      "type": "frame",
+                      "id": "v5ZKXA",
+                      "name": "任务标题与归属",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 4,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "JMtU1",
+                          "name": "任务标题",
+                          "fill": "$ink",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "核对销售数据",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 15,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "NTMhh",
+                          "name": "任务元信息",
+                          "fill": "$muted",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "上级：整理数据 · 未安排",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
                     },
-                    "k908I": {
-                      "content": "减重与生活习惯 · 今晚 · 本周0/3",
-                      "fontSize": 13
+                    {
+                      "type": "text",
+                      "id": "SkU2g",
+                      "name": "任务操作",
+                      "fill": "$muted",
+                      "content": "···",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 18,
+                      "fontWeight": "normal"
                     }
-                  }
+                  ]
                 },
                 {
-                  "id": "Y6hxQu",
-                  "type": "ref",
-                  "ref": "Q4Wfz",
-                  "name": "买牛奶",
+                  "type": "frame",
+                  "id": "OvtNx",
+                  "name": "买牛奶任务行",
                   "width": "fill_container",
-                  "descendants": {
-                    "LcJJY": {
-                      "width": 24,
-                      "height": 24,
-                      "icon": "circle"
+                  "stroke": "$line",
+                  "strokeWidth": {
+                    "bottom": 1
+                  },
+                  "gap": 12,
+                  "padding": [
+                    12,
+                    8
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "XCmLN",
+                      "name": "完成或展开",
+                      "fill": "$primary",
+                      "content": "○",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 18,
+                      "fontWeight": "normal"
                     },
-                    "NofnM": {
-                      "content": "买牛奶"
+                    {
+                      "type": "frame",
+                      "id": "OLseH",
+                      "name": "任务标题与归属",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 4,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "rV34S",
+                          "name": "任务标题",
+                          "fill": "$ink",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "买牛奶",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 15,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "A3PKDU",
+                          "name": "任务元信息",
+                          "fill": "$muted",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "独立待办 · 未安排",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
                     },
-                    "k908I": {
-                      "content": "生活 · 独立待办 · 回家时",
-                      "fontSize": 13
+                    {
+                      "type": "text",
+                      "id": "pkbRb",
+                      "name": "任务操作",
+                      "fill": "$muted",
+                      "content": "···",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 18,
+                      "fontWeight": "normal"
                     }
-                  }
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "W80Vr",
-              "name": "已完成",
-              "width": "fill_container",
-              "layout": "vertical",
-              "gap": 2,
-              "children": [
-                {
-                  "type": "text",
-                  "id": "zFFbR",
-                  "name": "折叠入口",
-                  "fill": "$muted",
-                  "content": "▾  已完成  2",
-                  "fontFamily": "Noto Sans SC",
-                  "fontSize": 16,
-                  "fontWeight": "normal"
-                },
-                {
-                  "id": "U9IcXL",
-                  "type": "ref",
-                  "ref": "Q4Wfz",
-                  "name": "英语复习",
-                  "width": "fill_container",
-                  "padding": 8,
-                  "descendants": {
-                    "LcJJY": {
-                      "icon": "circle-check",
-                      "width": 24,
-                      "height": 24
-                    },
-                    "NofnM": {
-                      "content": "英语复习",
-                      "fontSize": 16
-                    },
-                    "k908I": {
-                      "content": "英语备考 · 已记录30分钟",
-                      "fontSize": 13
-                    }
-                  }
-                },
-                {
-                  "id": "bviqk",
-                  "type": "ref",
-                  "ref": "Q4Wfz",
-                  "name": "阅读",
-                  "width": "fill_container",
-                  "padding": 8,
-                  "descendants": {
-                    "LcJJY": {
-                      "icon": "circle-check",
-                      "width": 24,
-                      "height": 24
-                    },
-                    "NofnM": {
-                      "content": "阅读",
-                      "fontSize": 16
-                    },
-                    "k908I": {
-                      "content": "保持阅读 · 15分钟 · 本周1/3",
-                      "fontSize": 13
-                    }
-                  }
+                  ]
                 }
               ]
             }
@@ -4315,7 +4972,7 @@
                 {
                   "type": "frame",
                   "id": "XG543",
-                  "name": "今日",
+                  "name": "待办",
                   "width": 90,
                   "height": 52,
                   "layout": "vertical",
@@ -4329,7 +4986,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$primary"
                     },
@@ -4338,7 +4995,7 @@
                       "id": "Tk9TC",
                       "name": "标签",
                       "fill": "$primary",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -4535,7 +5192,7 @@
               "id": "iS6rx",
               "name": "返回",
               "fill": "$primary",
-              "content": "‹  今日",
+              "content": "‹  待办",
               "fontFamily": "Noto Sans SC",
               "fontSize": 16,
               "fontWeight": "normal"
@@ -4752,7 +5409,7 @@
               "justifyContent": "center",
               "descendants": {
                 "my5G1": {
-                  "content": "返回今日",
+                  "content": "返回待办",
                   "fontSize": 17
                 }
               }
@@ -4799,7 +5456,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$primary"
                     },
@@ -4808,7 +5465,7 @@
                       "id": "ddhHq",
                       "name": "标签",
                       "fill": "$primary",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -5580,7 +6237,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$muted"
                     },
@@ -5589,7 +6246,7 @@
                       "id": "f0P9zo",
                       "name": "标签",
                       "fill": "$muted",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -6060,17 +6717,17 @@
                   "id": "uUqu2",
                   "type": "ref",
                   "ref": "IhvMl",
-                  "name": "今日",
+                  "name": "待办",
                   "width": "fill_container",
                   "fill": "$tint",
                   "cornerRadius": 12,
                   "descendants": {
                     "kr2Sp": {
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "fill": "$primary"
                     },
                     "EJYJK": {
-                      "content": "今日",
+                      "content": "待办",
                       "fill": "$primary"
                     }
                   }
@@ -6343,7 +7000,7 @@
                   "id": "QXh48",
                   "name": "位置",
                   "fill": "$muted",
-                  "content": "今日",
+                  "content": "待办",
                   "fontFamily": "Noto Sans SC",
                   "fontSize": 14,
                   "fontWeight": "normal"
@@ -6377,7 +7034,7 @@
                   "id": "wfSBG",
                   "name": "页面标题",
                   "fill": "$ink",
-                  "content": "今日",
+                  "content": "待办",
                   "fontFamily": "Noto Sans SC",
                   "fontSize": 28,
                   "fontWeight": "600"
@@ -6987,17 +7644,17 @@
                   "id": "Xk5QS",
                   "type": "ref",
                   "ref": "IhvMl",
-                  "name": "今日",
+                  "name": "待办",
                   "width": "fill_container",
                   "fill": "$soft",
                   "cornerRadius": 12,
                   "descendants": {
                     "kr2Sp": {
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "fill": "$muted"
                     },
                     "EJYJK": {
-                      "content": "今日",
+                      "content": "待办",
                       "fill": "$muted"
                     }
                   }
@@ -7779,17 +8436,17 @@
                   "id": "e7wKa",
                   "type": "ref",
                   "ref": "IhvMl",
-                  "name": "今日",
+                  "name": "待办",
                   "width": "fill_container",
                   "fill": "$soft",
                   "cornerRadius": 12,
                   "descendants": {
                     "kr2Sp": {
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "fill": "$muted"
                     },
                     "EJYJK": {
-                      "content": "今日",
+                      "content": "待办",
                       "fill": "$muted"
                     }
                   }
@@ -8801,7 +9458,7 @@
                   "id": "W6oYFs",
                   "name": "标题",
                   "fill": "$ink",
-                  "content": "今日",
+                  "content": "待办",
                   "fontFamily": "Noto Sans SC",
                   "fontSize": 28,
                   "fontWeight": "600"
@@ -9123,7 +9780,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$primary"
                     },
@@ -9132,7 +9789,7 @@
                       "id": "A7ikY",
                       "name": "标签",
                       "fill": "$primary",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -9777,7 +10434,7 @@
                   "id": "Xhh4F",
                   "name": "标题",
                   "fill": "$ink",
-                  "content": "今日",
+                  "content": "待办",
                   "fontFamily": "Noto Sans SC",
                   "fontSize": 28,
                   "fontWeight": "600"
@@ -10099,7 +10756,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$primary"
                     },
@@ -10108,7 +10765,7 @@
                       "id": "BAKPD",
                       "name": "标签",
                       "fill": "$primary",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -11379,7 +12036,7 @@
               "id": "M2zUx",
               "name": "返回",
               "fill": "$primary",
-              "content": "‹  今日",
+              "content": "‹  待办",
               "fontFamily": "Noto Sans SC",
               "fontSize": 16,
               "fontWeight": "normal"
@@ -11535,7 +12192,7 @@
               "alignItems": "center",
               "descendants": {
                 "my5G1": {
-                  "content": "返回今日",
+                  "content": "返回待办",
                   "fontSize": 16,
                   "fill": "$ink"
                 }
@@ -11596,7 +12253,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$primary"
                     },
@@ -11605,7 +12262,7 @@
                       "id": "Ca19n",
                       "name": "标签",
                       "fill": "$primary",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -11802,7 +12459,7 @@
               "id": "EiFPH",
               "name": "返回",
               "fill": "$primary",
-              "content": "‹  今日",
+              "content": "‹  待办",
               "fontFamily": "Noto Sans SC",
               "fontSize": 16,
               "fontWeight": "normal"
@@ -11993,7 +12650,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$primary"
                     },
@@ -12002,7 +12659,7 @@
                       "id": "PUekq",
                       "name": "标签",
                       "fill": "$primary",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -12208,7 +12865,7 @@
                   "id": "lkoXH",
                   "name": "标题",
                   "fill": "$ink",
-                  "content": "今日",
+                  "content": "待办",
                   "fontFamily": "Noto Sans SC",
                   "fontSize": 28,
                   "fontWeight": "600"
@@ -12530,7 +13187,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$primary"
                     },
@@ -12539,7 +13196,7 @@
                       "id": "P0oFUY",
                       "name": "标签",
                       "fill": "$primary",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -12939,7 +13596,7 @@
               "id": "q3tZnR",
               "name": "返回",
               "fill": "$primary",
-              "content": "‹  今日",
+              "content": "‹  待办",
               "fontFamily": "Noto Sans SC",
               "fontSize": 16,
               "fontWeight": "normal"
@@ -13156,7 +13813,7 @@
               "justifyContent": "center",
               "descendants": {
                 "my5G1": {
-                  "content": "返回今日",
+                  "content": "返回待办",
                   "fontSize": 17
                 }
               }
@@ -13203,7 +13860,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$primary"
                     },
@@ -13212,7 +13869,7 @@
                       "id": "x22I0",
                       "name": "标签",
                       "fill": "$primary",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -13419,7 +14076,7 @@
                   "id": "GYPTr",
                   "name": "返回",
                   "fill": "$primary",
-                  "content": "‹ 今日",
+                  "content": "‹ 待办",
                   "fontFamily": "Noto Sans SC",
                   "fontSize": 16,
                   "fontWeight": "normal"
@@ -13760,7 +14417,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$primary"
                     },
@@ -13769,7 +14426,7 @@
                       "id": "tjcZk",
                       "name": "标签",
                       "fill": "$primary",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -13976,7 +14633,7 @@
                   "id": "GuRmc",
                   "name": "返回",
                   "fill": "$primary",
-                  "content": "‹ 今日",
+                  "content": "‹ 待办",
                   "fontFamily": "Noto Sans SC",
                   "fontSize": 16,
                   "fontWeight": "normal"
@@ -14317,7 +14974,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$primary"
                     },
@@ -14326,7 +14983,7 @@
                       "id": "mVtTa",
                       "name": "标签",
                       "fill": "$primary",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -14881,7 +15538,7 @@
                   "id": "M2WyB0",
                   "name": "返回",
                   "fill": "$primary",
-                  "content": "‹ 今日",
+                  "content": "‹ 待办",
                   "fontFamily": "Noto Sans SC",
                   "fontSize": 16,
                   "fontWeight": "normal"
@@ -15222,7 +15879,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$primary"
                     },
@@ -15231,7 +15888,7 @@
                       "id": "TxNJN",
                       "name": "标签",
                       "fill": "$primary",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -15809,7 +16466,7 @@
                   "id": "q1qnQ",
                   "name": "返回",
                   "fill": "$primary",
-                  "content": "‹ 今日",
+                  "content": "‹ 待办",
                   "fontFamily": "Noto Sans SC",
                   "fontSize": 16,
                   "fontWeight": "normal"
@@ -16038,7 +16695,7 @@
               "justifyContent": "center",
               "descendants": {
                 "my5G1": {
-                  "content": "稍后选择，返回今日",
+                  "content": "稍后选择，返回待办",
                   "fontSize": 16,
                   "fill": "$ink"
                 }
@@ -16086,7 +16743,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$primary"
                     },
@@ -16095,7 +16752,7 @@
                       "id": "SzB5W",
                       "name": "标签",
                       "fill": "$primary",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -16275,17 +16932,17 @@
                   "id": "qAkXb",
                   "type": "ref",
                   "ref": "IhvMl",
-                  "name": "今日",
+                  "name": "待办",
                   "width": "fill_container",
                   "fill": "$tint",
                   "cornerRadius": 12,
                   "descendants": {
                     "kr2Sp": {
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "fill": "$primary"
                     },
                     "EJYJK": {
-                      "content": "今日",
+                      "content": "待办",
                       "fill": "$primary"
                     }
                   }
@@ -16558,7 +17215,7 @@
                   "id": "YmKDI",
                   "name": "位置",
                   "fill": "$muted",
-                  "content": "今日",
+                  "content": "待办",
                   "fontFamily": "Noto Sans SC",
                   "fontSize": 14,
                   "fontWeight": "normal"
@@ -16592,7 +17249,7 @@
                   "id": "acV5S",
                   "name": "页面标题",
                   "fill": "$ink",
-                  "content": "今日",
+                  "content": "待办",
                   "fontFamily": "Noto Sans SC",
                   "fontSize": 28,
                   "fontWeight": "600"
@@ -17147,7 +17804,7 @@
                   "justifyContent": "center",
                   "descendants": {
                     "my5G1": {
-                      "content": "返回今日",
+                      "content": "返回待办",
                       "fontSize": 16,
                       "fill": "#FFFFFF"
                     }
@@ -18049,7 +18706,7 @@
                   "id": "dX2Wr",
                   "name": "返回",
                   "fill": "$primary",
-                  "content": "‹ 今日",
+                  "content": "‹ 待办",
                   "fontFamily": "Noto Sans SC",
                   "fontSize": 16,
                   "fontWeight": "normal"
@@ -18314,7 +18971,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$primary"
                     },
@@ -18323,7 +18980,7 @@
                       "id": "JZhxA",
                       "name": "标签",
                       "fill": "$primary",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -18755,17 +19412,17 @@
                   "id": "mKYtZ",
                   "type": "ref",
                   "ref": "IhvMl",
-                  "name": "今日",
+                  "name": "待办",
                   "width": "fill_container",
                   "fill": "$soft",
                   "cornerRadius": 12,
                   "descendants": {
                     "kr2Sp": {
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "fill": "$muted"
                     },
                     "EJYJK": {
-                      "content": "今日",
+                      "content": "待办",
                       "fill": "$muted"
                     }
                   }
@@ -19789,17 +20446,17 @@
                   "id": "LEGxo",
                   "type": "ref",
                   "ref": "IhvMl",
-                  "name": "今日",
+                  "name": "待办",
                   "width": "fill_container",
                   "fill": "$soft",
                   "cornerRadius": 12,
                   "descendants": {
                     "kr2Sp": {
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "fill": "$muted"
                     },
                     "EJYJK": {
-                      "content": "今日",
+                      "content": "待办",
                       "fill": "$muted"
                     }
                   }
@@ -20781,17 +21438,17 @@
                   "id": "oUy1X",
                   "type": "ref",
                   "ref": "IhvMl",
-                  "name": "今日",
+                  "name": "待办",
                   "width": "fill_container",
                   "fill": "$soft",
                   "cornerRadius": 12,
                   "descendants": {
                     "kr2Sp": {
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "fill": "$muted"
                     },
                     "EJYJK": {
-                      "content": "今日",
+                      "content": "待办",
                       "fill": "$muted"
                     }
                   }
@@ -22527,7 +23184,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$muted"
                     },
@@ -22536,7 +23193,7 @@
                       "id": "HCMRZ",
                       "name": "标签",
                       "fill": "$muted",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -23093,7 +23750,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$muted"
                     },
@@ -23102,7 +23759,7 @@
                       "id": "O1t5M",
                       "name": "标签",
                       "fill": "$muted",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -23551,7 +24208,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$muted"
                     },
@@ -23560,7 +24217,7 @@
                       "id": "pTNKW",
                       "name": "标签",
                       "fill": "$muted",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -23767,7 +24424,7 @@
                   "id": "At7fy",
                   "name": "返回",
                   "fill": "$primary",
-                  "content": "‹ 今日",
+                  "content": "‹ 待办",
                   "fontFamily": "Noto Sans SC",
                   "fontSize": 16,
                   "fontWeight": "normal"
@@ -24104,7 +24761,7 @@
               "id": "Oac2Z",
               "type": "ref",
               "ref": "ZFRF9",
-              "name": "查看计划历史",
+              "name": "手动添加待办入口",
               "width": "fill_container",
               "height": 48,
               "alignItems": "center",
@@ -24112,7 +24769,7 @@
               "fill": "$soft",
               "descendants": {
                 "my5G1": {
-                  "content": "查看计划历史",
+                  "content": "＋ 添加待办",
                   "fontSize": 16,
                   "fill": "$ink"
                 }
@@ -24160,7 +24817,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$muted"
                     },
@@ -24169,7 +24826,7 @@
                       "id": "vq7uP",
                       "name": "标签",
                       "fill": "$muted",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -24386,7 +25043,7 @@
                   "id": "q60AW",
                   "name": "返回今日",
                   "fill": "$primary",
-                  "content": "返回今日",
+                  "content": "返回待办",
                   "fontFamily": "Noto Sans SC",
                   "fontSize": 15,
                   "fontWeight": "normal"
@@ -24659,7 +25316,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$muted"
                     },
@@ -24668,7 +25325,7 @@
                       "id": "oQ15q",
                       "name": "标签",
                       "fill": "$muted",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -25123,7 +25780,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$muted"
                     },
@@ -25132,7 +25789,7 @@
                       "id": "VtgQx",
                       "name": "标签",
                       "fill": "$muted",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -26085,7 +26742,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$muted"
                     },
@@ -26094,7 +26751,7 @@
                       "id": "yChtp",
                       "name": "标签",
                       "fill": "$muted",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -26728,7 +27385,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$muted"
                     },
@@ -26737,7 +27394,7 @@
                       "id": "O7DWU",
                       "name": "标签",
                       "fill": "$muted",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -27225,7 +27882,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$muted"
                     },
@@ -27234,7 +27891,7 @@
                       "id": "A9U3jx",
                       "name": "标签",
                       "fill": "$muted",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -27887,7 +28544,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$muted"
                     },
@@ -27896,7 +28553,7 @@
                       "id": "jBkRn",
                       "name": "标签",
                       "fill": "$muted",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -28494,7 +29151,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$muted"
                     },
@@ -28503,7 +29160,7 @@
                       "id": "mhuu3",
                       "name": "标签",
                       "fill": "$muted",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -29163,7 +29820,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$muted"
                     },
@@ -29172,7 +29829,7 @@
                       "id": "vIyae",
                       "name": "标签",
                       "fill": "$muted",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -29587,7 +30244,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$muted"
                     },
@@ -29596,7 +30253,7 @@
                       "id": "pC752",
                       "name": "标签",
                       "fill": "$muted",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -30224,7 +30881,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$muted"
                     },
@@ -30233,7 +30890,7 @@
                       "id": "noLMo",
                       "name": "标签",
                       "fill": "$muted",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -31442,17 +32099,17 @@
                   "id": "r4tSj",
                   "type": "ref",
                   "ref": "IhvMl",
-                  "name": "今日",
+                  "name": "待办",
                   "width": "fill_container",
                   "fill": "$soft",
                   "cornerRadius": 12,
                   "descendants": {
                     "kr2Sp": {
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "fill": "$muted"
                     },
                     "EJYJK": {
-                      "content": "今日",
+                      "content": "待办",
                       "fill": "$muted"
                     }
                   }
@@ -32463,17 +33120,17 @@
                   "id": "tIpqX",
                   "type": "ref",
                   "ref": "IhvMl",
-                  "name": "今日",
+                  "name": "待办",
                   "width": "fill_container",
                   "fill": "$soft",
                   "cornerRadius": 12,
                   "descendants": {
                     "kr2Sp": {
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "fill": "$muted"
                     },
                     "EJYJK": {
-                      "content": "今日",
+                      "content": "待办",
                       "fill": "$muted"
                     }
                   }
@@ -33044,17 +33701,17 @@
                   "id": "PelQ9",
                   "type": "ref",
                   "ref": "IhvMl",
-                  "name": "今日",
+                  "name": "待办",
                   "width": "fill_container",
                   "fill": "$tint",
                   "cornerRadius": 12,
                   "descendants": {
                     "kr2Sp": {
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "fill": "$primary"
                     },
                     "EJYJK": {
-                      "content": "今日",
+                      "content": "待办",
                       "fill": "$primary"
                     }
                   }
@@ -33327,7 +33984,7 @@
                   "id": "sEnrJ",
                   "name": "位置",
                   "fill": "$muted",
-                  "content": "今日",
+                  "content": "待办",
                   "fontFamily": "Noto Sans SC",
                   "fontSize": 14,
                   "fontWeight": "normal"
@@ -33361,7 +34018,7 @@
                   "id": "x1TV9",
                   "name": "页面标题",
                   "fill": "$ink",
-                  "content": "今日",
+                  "content": "待办",
                   "fontFamily": "Noto Sans SC",
                   "fontSize": 28,
                   "fontWeight": "600"
@@ -34264,17 +34921,17 @@
                   "id": "A7A8Z4",
                   "type": "ref",
                   "ref": "IhvMl",
-                  "name": "今日",
+                  "name": "待办",
                   "width": "fill_container",
                   "fill": "$soft",
                   "cornerRadius": 12,
                   "descendants": {
                     "kr2Sp": {
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "fill": "$muted"
                     },
                     "EJYJK": {
-                      "content": "今日",
+                      "content": "待办",
                       "fill": "$muted"
                     }
                   }
@@ -35424,7 +36081,7 @@
                   "id": "ynA6k",
                   "name": "标题",
                   "fill": "$ink",
-                  "content": "今日",
+                  "content": "待办",
                   "fontFamily": "Noto Sans SC",
                   "fontSize": 28,
                   "fontWeight": "600"
@@ -35767,7 +36424,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$primary"
                     },
@@ -35776,7 +36433,7 @@
                       "id": "J3k9b",
                       "name": "标签",
                       "fill": "$primary",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -36409,7 +37066,7 @@
           "width": "fill_container",
           "height": "fill_container",
           "layout": "vertical",
-          "gap": 12,
+          "gap": 10,
           "padding": [
             8,
             20,
@@ -36432,7 +37089,7 @@
                   "id": "Igrwx",
                   "name": "返回",
                   "fill": "$primary",
-                  "content": "‹ 今日",
+                  "content": "‹ 待办",
                   "fontFamily": "Noto Sans SC",
                   "fontSize": 16,
                   "fontWeight": "normal"
@@ -36477,6 +37134,19 @@
               "textGrowth": "fixed-width",
               "width": "fill_container",
               "content": "季度工作汇报 / 形成初稿 / 整理分析",
+              "lineHeight": 1.45,
+              "fontFamily": "Noto Sans SC",
+              "fontSize": 14,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "Fb2WW",
+              "name": "子任务操作入口",
+              "fill": "$primary",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "＋ 添加子任务             移动到…",
               "lineHeight": 1.45,
               "fontFamily": "Noto Sans SC",
               "fontSize": 14,
@@ -36825,7 +37495,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$primary"
                     },
@@ -36834,7 +37504,7 @@
                       "id": "s8RPoL",
                       "name": "标签",
                       "fill": "$primary",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -37434,7 +38104,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$primary"
                     },
@@ -37443,7 +38113,7 @@
                       "id": "vMinV",
                       "name": "标签",
                       "fill": "$primary",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -37650,7 +38320,7 @@
                   "id": "u2QOGe",
                   "name": "返回",
                   "fill": "$primary",
-                  "content": "‹ 今日",
+                  "content": "‹ 待办",
                   "fontFamily": "Noto Sans SC",
                   "fontSize": 16,
                   "fontWeight": "normal"
@@ -38063,7 +38733,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$primary"
                     },
@@ -38072,7 +38742,7 @@
                       "id": "cUZjD",
                       "name": "标签",
                       "fill": "$primary",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -38638,7 +39308,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$primary"
                     },
@@ -38647,7 +39317,7 @@
                       "id": "Au8Qo",
                       "name": "标签",
                       "fill": "$primary",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -39163,7 +39833,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$primary"
                     },
@@ -39172,7 +39842,7 @@
                       "id": "neVQM",
                       "name": "标签",
                       "fill": "$primary",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -39685,7 +40355,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$primary"
                     },
@@ -39694,7 +40364,7 @@
                       "id": "srbXs",
                       "name": "标签",
                       "fill": "$primary",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -40195,7 +40865,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$primary"
                     },
@@ -40204,7 +40874,7 @@
                       "id": "IomWp",
                       "name": "标签",
                       "fill": "$primary",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -40611,7 +41281,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$primary"
                     },
@@ -40620,7 +41290,7 @@
                       "id": "IIMSj",
                       "name": "标签",
                       "fill": "$primary",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -40997,7 +41667,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$primary"
                     },
@@ -41006,7 +41676,7 @@
                       "id": "C9Hpd",
                       "name": "标签",
                       "fill": "$primary",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -41591,7 +42261,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$primary"
                     },
@@ -41600,7 +42270,7 @@
                       "id": "oMzXO",
                       "name": "标签",
                       "fill": "$primary",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -41809,7 +42479,7 @@
                   "id": "hrdMC",
                   "name": "标题",
                   "fill": "$ink",
-                  "content": "今日",
+                  "content": "待办",
                   "fontFamily": "Noto Sans SC",
                   "fontSize": 28,
                   "fontWeight": "600"
@@ -42152,7 +42822,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$primary"
                     },
@@ -42161,7 +42831,7 @@
                       "id": "f7ogm",
                       "name": "标签",
                       "fill": "$primary",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -42368,7 +43038,7 @@
                   "id": "aBk8g",
                   "name": "标题",
                   "fill": "$ink",
-                  "content": "今日",
+                  "content": "待办",
                   "fontFamily": "Noto Sans SC",
                   "fontSize": 32,
                   "fontWeight": "600"
@@ -42787,7 +43457,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$primary"
                     },
@@ -42796,7 +43466,7 @@
                       "id": "UW7xZ",
                       "name": "标签",
                       "fill": "$primary",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 16,
                       "fontWeight": "normal"
@@ -43003,7 +43673,7 @@
                   "id": "aktsv",
                   "name": "标题",
                   "fill": "$ink",
-                  "content": "今日",
+                  "content": "待办",
                   "fontFamily": "Noto Sans SC",
                   "fontSize": 32,
                   "fontWeight": "600"
@@ -43338,7 +44008,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$primary"
                     },
@@ -43347,7 +44017,7 @@
                       "id": "uryCs",
                       "name": "标签",
                       "fill": "$primary",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 16,
                       "fontWeight": "normal"
@@ -43520,7 +44190,7 @@
                       "name": "sun",
                       "width": 24,
                       "height": 24,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$primary"
                     },
@@ -44363,7 +45033,7 @@
                   "fill": "$primary",
                   "descendants": {
                     "my5G1": {
-                      "content": "查看今日",
+                      "content": "查看待办",
                       "fontSize": 16,
                       "fill": "#FFFFFF"
                     }
@@ -45871,7 +46541,7 @@
                   "fill": "$soft",
                   "descendants": {
                     "my5G1": {
-                      "content": "返回今日",
+                      "content": "返回待办",
                       "fontSize": 16,
                       "fill": "$ink"
                     }
@@ -49892,7 +50562,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$primary"
                     },
@@ -49901,7 +50571,7 @@
                       "id": "wU8Jb",
                       "name": "标签",
                       "fill": "$primary",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -51739,7 +52409,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$muted"
                     },
@@ -51748,7 +52418,7 @@
                       "id": "jAWCX",
                       "name": "标签",
                       "fill": "$muted",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -52375,7 +53045,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$muted"
                     },
@@ -52384,7 +53054,7 @@
                       "id": "wRMib",
                       "name": "标签",
                       "fill": "$muted",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -52929,7 +53599,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$muted"
                     },
@@ -52938,7 +53608,7 @@
                       "id": "xAWYY",
                       "name": "标签",
                       "fill": "$muted",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -53483,7 +54153,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$muted"
                     },
@@ -53492,7 +54162,7 @@
                       "id": "BbVv0",
                       "name": "标签",
                       "fill": "$muted",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -53971,7 +54641,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$muted"
                     },
@@ -53980,7 +54650,7 @@
                       "id": "gSOHA",
                       "name": "标签",
                       "fill": "$muted",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -54456,7 +55126,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$muted"
                     },
@@ -54465,7 +55135,7 @@
                       "id": "quGrO",
                       "name": "标签",
                       "fill": "$muted",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -55040,7 +55710,7 @@
                       "name": "sun",
                       "width": 20,
                       "height": 20,
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "library": "lucide",
                       "fill": "$muted"
                     },
@@ -55049,7 +55719,7 @@
                       "id": "Exhn3",
                       "name": "标签",
                       "fill": "$muted",
-                      "content": "今日",
+                      "content": "待办",
                       "fontFamily": "Noto Sans SC",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -55229,17 +55899,17 @@
                   "id": "D6nyuq",
                   "type": "ref",
                   "ref": "IhvMl",
-                  "name": "今日",
+                  "name": "待办",
                   "width": "fill_container",
                   "fill": "$soft",
                   "cornerRadius": 12,
                   "descendants": {
                     "kr2Sp": {
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "fill": "$muted"
                     },
                     "EJYJK": {
-                      "content": "今日",
+                      "content": "待办",
                       "fill": "$muted"
                     }
                   }
@@ -56276,17 +56946,17 @@
                   "id": "xh5bV",
                   "type": "ref",
                   "ref": "IhvMl",
-                  "name": "今日",
+                  "name": "待办",
                   "width": "fill_container",
                   "fill": "$soft",
                   "cornerRadius": 12,
                   "descendants": {
                     "kr2Sp": {
-                      "icon": "sun",
+                      "icon": "list-todo",
                       "fill": "$muted"
                     },
                     "EJYJK": {
-                      "content": "今日",
+                      "content": "待办",
                       "fill": "$muted"
                     }
                   }
@@ -56666,7 +57336,7 @@
                           "id": "PX9lu",
                           "name": "今日入口",
                           "fill": "$primary",
-                          "content": "在今日查看 →",
+                          "content": "在待办查看 →",
                           "fontFamily": "Noto Sans SC",
                           "fontSize": 15,
                           "fontWeight": "normal"
@@ -57849,6 +58519,1553 @@
           "fontFamily": "Noto Sans SC",
           "fontSize": 16,
           "fontWeight": "normal"
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "ARqU5",
+      "x": 5600,
+      "y": 1200,
+      "name": "D04-Manual Mac 手动创建待办",
+      "clip": true,
+      "width": 1440,
+      "height": 960,
+      "fill": "$bg",
+      "children": [
+        {
+          "type": "frame",
+          "id": "rRPGE",
+          "name": "侧边导航",
+          "width": 220,
+          "height": "fill_container",
+          "fill": "$soft",
+          "layout": "vertical",
+          "gap": 28,
+          "padding": [
+            24,
+            16
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "tvham",
+              "name": "窗口控制",
+              "gap": 8,
+              "children": [
+                {
+                  "type": "ellipse",
+                  "id": "xGEdp",
+                  "name": "窗口按钮",
+                  "fill": "#DA8178",
+                  "width": 12,
+                  "height": 12
+                },
+                {
+                  "type": "ellipse",
+                  "id": "fNbFW",
+                  "name": "窗口按钮",
+                  "fill": "#E6C071",
+                  "width": 12,
+                  "height": 12
+                },
+                {
+                  "type": "ellipse",
+                  "id": "i8dOZ",
+                  "name": "窗口按钮",
+                  "fill": "#8ABD92",
+                  "width": 12,
+                  "height": 12
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "V5tBK6",
+              "name": "品牌",
+              "fill": "$primary",
+              "content": "渐成",
+              "fontFamily": "Noto Sans SC",
+              "fontSize": 16,
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "o3rkC",
+              "name": "主导航",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 8,
+              "children": [
+                {
+                  "id": "bmfvb",
+                  "type": "ref",
+                  "ref": "IhvMl",
+                  "name": "待办",
+                  "width": "fill_container",
+                  "fill": "$tint",
+                  "cornerRadius": 12,
+                  "descendants": {
+                    "kr2Sp": {
+                      "icon": "list-todo",
+                      "fill": "$primary"
+                    },
+                    "EJYJK": {
+                      "content": "待办",
+                      "fill": "$primary"
+                    }
+                  }
+                },
+                {
+                  "type": "frame",
+                  "id": "f4aa2",
+                  "name": "收件箱",
+                  "width": "fill_container",
+                  "fill": "$soft",
+                  "cornerRadius": 12,
+                  "gap": 12,
+                  "padding": 12,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "Frazv",
+                      "name": "inbox",
+                      "width": 20,
+                      "height": 20,
+                      "icon": "inbox",
+                      "library": "lucide",
+                      "fill": "$muted"
+                    },
+                    {
+                      "type": "text",
+                      "id": "x7H9x",
+                      "name": "导航",
+                      "fill": "$muted",
+                      "content": "收件箱",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "L6j3O",
+                  "name": "计划",
+                  "width": "fill_container",
+                  "fill": "$soft",
+                  "cornerRadius": 12,
+                  "gap": 12,
+                  "padding": 12,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "JqyYT",
+                      "name": "layers",
+                      "width": 20,
+                      "height": 20,
+                      "icon": "layers",
+                      "library": "lucide",
+                      "fill": "$muted"
+                    },
+                    {
+                      "type": "text",
+                      "id": "S0GGs",
+                      "name": "导航",
+                      "fill": "$muted",
+                      "content": "计划",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "iGvHI",
+                  "name": "回顾",
+                  "width": "fill_container",
+                  "fill": "$soft",
+                  "cornerRadius": 12,
+                  "gap": 12,
+                  "padding": 12,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "i8YUl",
+                      "name": "chart-no-axes-column",
+                      "width": 20,
+                      "height": 20,
+                      "icon": "chart-no-axes-column",
+                      "library": "lucide",
+                      "fill": "$muted"
+                    },
+                    {
+                      "type": "text",
+                      "id": "cWaII",
+                      "name": "导航",
+                      "fill": "$muted",
+                      "content": "回顾",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "qhp3s",
+                  "name": "搜索",
+                  "width": "fill_container",
+                  "fill": "$soft",
+                  "cornerRadius": 12,
+                  "gap": 12,
+                  "padding": 12,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "jnV4I",
+                      "name": "search",
+                      "width": 20,
+                      "height": 20,
+                      "icon": "search",
+                      "library": "lucide",
+                      "fill": "$muted"
+                    },
+                    {
+                      "type": "text",
+                      "id": "FCDbv",
+                      "name": "导航",
+                      "fill": "$muted",
+                      "content": "搜索",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "gnaTs",
+              "name": "常用计划",
+              "layout": "vertical",
+              "gap": 16,
+              "padding": [
+                8,
+                12
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "jkE8V",
+                  "name": "分组",
+                  "fill": "$muted",
+                  "content": "我的计划",
+                  "fontFamily": "Noto Sans SC",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "e4zoH",
+                  "name": "季度工作汇报",
+                  "fill": "$muted",
+                  "content": "季度工作汇报",
+                  "fontFamily": "Noto Sans SC",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "p6BBn1",
+                  "name": "减重与生活习惯",
+                  "fill": "$muted",
+                  "content": "减重与生活习惯",
+                  "fontFamily": "Noto Sans SC",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "fVDan",
+                  "name": "英语备考",
+                  "fill": "$muted",
+                  "content": "英语备考",
+                  "fontFamily": "Noto Sans SC",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "L2pKz",
+                  "name": "保持阅读",
+                  "fill": "$muted",
+                  "content": "保持阅读",
+                  "fontFamily": "Noto Sans SC",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "hepJE",
+              "name": "留白",
+              "width": 1,
+              "height": "fill_container",
+              "layout": "vertical",
+              "gap": 16
+            },
+            {
+              "type": "frame",
+              "id": "Az2e1",
+              "name": "设置",
+              "gap": 12,
+              "padding": 12,
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "rBA6z",
+                  "name": "settings",
+                  "width": 20,
+                  "height": 20,
+                  "icon": "settings",
+                  "library": "lucide",
+                  "fill": "$muted"
+                },
+                {
+                  "type": "text",
+                  "id": "TnfCZ",
+                  "name": "设置文字",
+                  "fill": "$ink",
+                  "content": "设置",
+                  "fontFamily": "Noto Sans SC",
+                  "fontSize": 15,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "THG1L",
+          "name": "工作区",
+          "width": "fill_container",
+          "height": "fill_container",
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "Q4uhcR",
+              "name": "窗口工具栏",
+              "width": "fill_container",
+              "height": 60,
+              "stroke": "$line",
+              "strokeWidth": {
+                "bottom": 1
+              },
+              "gap": 16,
+              "padding": [
+                0,
+                32
+              ],
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "LWZlL",
+                  "name": "位置",
+                  "fill": "$muted",
+                  "content": "待办",
+                  "fontFamily": "Noto Sans SC",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "icon",
+                  "id": "Y9XnR9",
+                  "name": "panel-right",
+                  "width": 20,
+                  "height": 20,
+                  "icon": "panel-right",
+                  "library": "lucide",
+                  "fill": "$muted"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "swXmc",
+              "name": "待办内容",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 20,
+              "padding": [
+                32,
+                72
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "NoV8Q",
+                  "name": "表单标题",
+                  "fill": "$ink",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "新建待办",
+                  "fontFamily": "Noto Sans SC",
+                  "fontSize": 30,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "s0Wz5",
+                  "name": "表单说明",
+                  "fill": "$muted",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "只需填写标题，其余可以稍后补充",
+                  "fontFamily": "Noto Sans SC",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "boZq8",
+                  "name": "手动创建表单",
+                  "width": "fill_container",
+                  "fill": "$surface",
+                  "cornerRadius": 12,
+                  "layout": "vertical",
+                  "gap": 18,
+                  "padding": 24,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "jQhAC",
+                      "name": "标题字段",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 8,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "YhAxW",
+                          "name": "标题标签",
+                          "fill": "$muted",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "标题",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "awhdk",
+                          "name": "标题值",
+                          "fill": "$ink",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "核对销售数据",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 15,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "kopES",
+                      "name": "所属计划字段",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 8,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "L2APp",
+                          "name": "所属计划标签",
+                          "fill": "$muted",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "所属计划",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "x3opK",
+                          "name": "所属计划值",
+                          "fill": "$ink",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "季度工作汇报  ▾",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 15,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "K8AAA2",
+                      "name": "安排日期字段",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 8,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "zx6wU",
+                          "name": "安排日期标签",
+                          "fill": "$muted",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "安排日期",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "P7aOrL",
+                          "name": "安排日期值",
+                          "fill": "$ink",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "未安排  ○",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 15,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "yuXy1",
+                      "name": "优先级字段",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 8,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "y02lK",
+                          "name": "优先级标签",
+                          "fill": "$muted",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "优先级",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "LAeAb",
+                          "name": "优先级值",
+                          "fill": "$ink",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "普通  ▾",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 15,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "WVLwc",
+                      "name": "备注（可选）字段",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 8,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "Nsioc",
+                          "name": "备注（可选）标签",
+                          "fill": "$muted",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "备注（可选）",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "zak6D",
+                          "name": "备注（可选）值",
+                          "fill": "$ink",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "补充说明…",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 15,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "oVBde",
+                      "name": "保存与取消",
+                      "width": "fill_container",
+                      "gap": 20,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "id": "ZNhZy",
+                          "type": "ref",
+                          "ref": "ZFRF9",
+                          "name": "添加待办",
+                          "descendants": {
+                            "my5G1": {
+                              "content": "添加"
+                            }
+                          }
+                        },
+                        {
+                          "type": "text",
+                          "id": "nwaGN",
+                          "name": "取消",
+                          "fill": "$muted",
+                          "content": "取消",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 14,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "UA6Gu",
+      "x": 2459,
+      "y": 2280,
+      "name": "M04-Manual iPhone 手动创建待办",
+      "clip": true,
+      "width": 393,
+      "height": 852,
+      "fill": "$bg",
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "OkZmM",
+          "name": "状态栏",
+          "width": "fill_container",
+          "height": 44,
+          "gap": 16,
+          "padding": [
+            0,
+            24
+          ],
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "text",
+              "id": "RNQQP",
+              "name": "时间",
+              "fill": "$ink",
+              "content": "9:41",
+              "fontFamily": "Noto Sans SC",
+              "fontSize": 15,
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "cALEu",
+              "name": "系统状态",
+              "gap": 6,
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "QlerP",
+                  "name": "信号",
+                  "width": 16,
+                  "height": 16,
+                  "icon": "signal",
+                  "library": "lucide",
+                  "fill": "$ink"
+                },
+                {
+                  "type": "icon",
+                  "id": "WxNdu",
+                  "name": "无线网络",
+                  "width": 16,
+                  "height": 16,
+                  "icon": "wifi",
+                  "library": "lucide",
+                  "fill": "$ink"
+                },
+                {
+                  "type": "icon",
+                  "id": "t4bNAD",
+                  "name": "电量",
+                  "width": 20,
+                  "height": 16,
+                  "icon": "battery-full",
+                  "library": "lucide",
+                  "fill": "$ink"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "k7TYb",
+          "name": "待办内容",
+          "width": "fill_container",
+          "height": "fill_container",
+          "layout": "vertical",
+          "gap": 14,
+          "padding": [
+            16,
+            20
+          ],
+          "children": [
+            {
+              "type": "text",
+              "id": "MAti9",
+              "name": "表单标题",
+              "fill": "$ink",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "新建待办",
+              "fontFamily": "Noto Sans SC",
+              "fontSize": 28,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "xOnkY",
+              "name": "表单说明",
+              "fill": "$muted",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "只需填写标题，其余可以稍后补充",
+              "fontFamily": "Noto Sans SC",
+              "fontSize": 14,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "frame",
+              "id": "PMRpZ",
+              "name": "手动创建表单",
+              "width": "fill_container",
+              "fill": "$surface",
+              "cornerRadius": 12,
+              "layout": "vertical",
+              "gap": 18,
+              "padding": 16,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "wZxhs",
+                  "name": "标题字段",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "O9jIh",
+                      "name": "标题标签",
+                      "fill": "$muted",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "标题",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "uzlxz",
+                      "name": "标题值",
+                      "fill": "$ink",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "核对销售数据",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "WpCtJ",
+                  "name": "所属计划字段",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "XHCtn",
+                      "name": "所属计划标签",
+                      "fill": "$muted",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "所属计划",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "aUrT2",
+                      "name": "所属计划值",
+                      "fill": "$ink",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "季度工作汇报  ▾",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "JUhza",
+                  "name": "安排日期字段",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "EJWlx",
+                      "name": "安排日期标签",
+                      "fill": "$muted",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "安排日期",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "Gf9cq",
+                      "name": "安排日期值",
+                      "fill": "$ink",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "未安排  ○",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "FYUlF",
+                  "name": "优先级字段",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "FVf1v",
+                      "name": "优先级标签",
+                      "fill": "$muted",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "优先级",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "d9u2O",
+                      "name": "优先级值",
+                      "fill": "$ink",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "普通  ▾",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "US9Z6",
+                  "name": "备注（可选）字段",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "xfcB1",
+                      "name": "备注（可选）标签",
+                      "fill": "$muted",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "备注（可选）",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "MOgr5",
+                      "name": "备注（可选）值",
+                      "fill": "$ink",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "补充说明…",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "D7dHA",
+                  "name": "保存与取消",
+                  "width": "fill_container",
+                  "gap": 20,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "id": "N9UJfk",
+                      "type": "ref",
+                      "ref": "ZFRF9",
+                      "name": "添加待办",
+                      "descendants": {
+                        "my5G1": {
+                          "content": "添加"
+                        }
+                      }
+                    },
+                    {
+                      "type": "text",
+                      "id": "cWgZS",
+                      "name": "取消",
+                      "fill": "$muted",
+                      "content": "取消",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 14,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "cpVC5",
+          "name": "底部标签与安全区",
+          "width": "fill_container",
+          "height": 84,
+          "fill": "$surface",
+          "stroke": "$line",
+          "strokeWidth": {
+            "top": 1
+          },
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "qThC6",
+              "name": "标签栏",
+              "width": "fill_container",
+              "height": 58,
+              "gap": 16,
+              "justifyContent": "space_around",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "PogWW",
+                  "name": "今日",
+                  "width": 90,
+                  "height": 52,
+                  "layout": "vertical",
+                  "gap": 2,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "c1FzQi",
+                      "name": "sun",
+                      "width": 20,
+                      "height": 20,
+                      "icon": "list-todo",
+                      "library": "lucide",
+                      "fill": "$primary"
+                    },
+                    {
+                      "type": "text",
+                      "id": "JVEf9",
+                      "name": "标签",
+                      "fill": "$primary",
+                      "content": "待办",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "z6egIc",
+                  "name": "计划",
+                  "width": 90,
+                  "height": 52,
+                  "layout": "vertical",
+                  "gap": 2,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "sjEUH",
+                      "name": "layers",
+                      "width": 20,
+                      "height": 20,
+                      "icon": "layers",
+                      "library": "lucide",
+                      "fill": "$muted"
+                    },
+                    {
+                      "type": "text",
+                      "id": "z7LVtb",
+                      "name": "标签",
+                      "fill": "$muted",
+                      "content": "计划",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "Ed163",
+                  "name": "回顾",
+                  "width": 90,
+                  "height": 52,
+                  "layout": "vertical",
+                  "gap": 2,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "msiVV",
+                      "name": "chart-no-axes-column",
+                      "width": 20,
+                      "height": 20,
+                      "icon": "chart-no-axes-column",
+                      "library": "lucide",
+                      "fill": "$muted"
+                    },
+                    {
+                      "type": "text",
+                      "id": "JLsNO",
+                      "name": "标签",
+                      "fill": "$muted",
+                      "content": "回顾",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "AgE72",
+              "name": "安全区",
+              "width": "fill_container",
+              "height": 26,
+              "layout": "vertical",
+              "gap": 16,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 3,
+                  "id": "AaF7C",
+                  "name": "Home indicator",
+                  "fill": "$ink",
+                  "width": 134,
+                  "height": 5
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "CUQKS",
+      "x": 2972,
+      "y": 2280,
+      "name": "M12-Subtasks iPhone 多级子任务",
+      "clip": true,
+      "width": 393,
+      "height": 852,
+      "fill": "$bg",
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "z13BF",
+          "name": "状态栏",
+          "width": "fill_container",
+          "height": 44,
+          "gap": 16,
+          "padding": [
+            0,
+            24
+          ],
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "text",
+              "id": "v9TuMf",
+              "name": "时间",
+              "fill": "$ink",
+              "content": "9:41",
+              "fontFamily": "Noto Sans SC",
+              "fontSize": 15,
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "K5sywl",
+              "name": "系统状态",
+              "gap": 6,
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "xSh6y",
+                  "name": "信号",
+                  "width": 16,
+                  "height": 16,
+                  "icon": "signal",
+                  "library": "lucide",
+                  "fill": "$ink"
+                },
+                {
+                  "type": "icon",
+                  "id": "ETpax",
+                  "name": "无线网络",
+                  "width": 16,
+                  "height": 16,
+                  "icon": "wifi",
+                  "library": "lucide",
+                  "fill": "$ink"
+                },
+                {
+                  "type": "icon",
+                  "id": "M00Y4Q",
+                  "name": "电量",
+                  "width": 20,
+                  "height": 16,
+                  "icon": "battery-full",
+                  "library": "lucide",
+                  "fill": "$ink"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "O920KR",
+          "name": "待办内容",
+          "width": "fill_container",
+          "height": "fill_container",
+          "layout": "vertical",
+          "gap": 14,
+          "padding": [
+            16,
+            20
+          ],
+          "children": [
+            {
+              "type": "text",
+              "id": "UZPG0",
+              "name": "返回上级",
+              "fill": "$primary",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "‹ 准备季度汇报",
+              "fontFamily": "Noto Sans SC",
+              "fontSize": 14,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "ZFqCJ",
+              "name": "任务标题",
+              "fill": "$ink",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "整理数据",
+              "fontFamily": "Noto Sans SC",
+              "fontSize": 26,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "aaY8l",
+              "name": "所属计划",
+              "fill": "$muted",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "季度工作汇报 · 子任务 0/2",
+              "fontFamily": "Noto Sans SC",
+              "fontSize": 13,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "c5saVD",
+              "name": "新建入口",
+              "fill": "$primary",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "＋ 添加子任务                       移动到…",
+              "fontFamily": "Noto Sans SC",
+              "fontSize": 14,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "frame",
+              "id": "L4aDmB",
+              "name": "下一级待办",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 12,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "cSKNx",
+                  "name": "核对销售数据",
+                  "width": "fill_container",
+                  "stroke": "$line",
+                  "strokeWidth": {
+                    "bottom": 1
+                  },
+                  "layout": "vertical",
+                  "gap": 6,
+                  "padding": [
+                    16,
+                    0
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "x9gpNu",
+                      "name": "待办标题",
+                      "fill": "$ink",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "○  核对销售数据",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "kk9S6",
+                      "name": "日期",
+                      "fill": "$muted",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "未安排",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "OURFk",
+                  "name": "补充区域差异说明",
+                  "width": "fill_container",
+                  "stroke": "$line",
+                  "strokeWidth": {
+                    "bottom": 1
+                  },
+                  "layout": "vertical",
+                  "gap": 6,
+                  "padding": [
+                    16,
+                    0
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "F7AdzR",
+                      "name": "待办标题",
+                      "fill": "$ink",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "○  补充区域差异说明",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "IeUQD",
+                      "name": "日期",
+                      "fill": "$muted",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "安排 明天",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "QcI7j",
+              "name": "行内新建子任务",
+              "width": "fill_container",
+              "fill": "$surface",
+              "cornerRadius": 10,
+              "stroke": "$line",
+              "strokeWidth": 1,
+              "layout": "vertical",
+              "gap": 12,
+              "padding": 14,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "D0UtI",
+                  "name": "子任务输入",
+                  "fill": "$muted",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "输入子任务标题…",
+                  "fontFamily": "Noto Sans SC",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                },
+                {
+                  "id": "C50LY7",
+                  "type": "ref",
+                  "ref": "ZFRF9",
+                  "name": "确认添加",
+                  "descendants": {
+                    "my5G1": {
+                      "content": "添加"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "TVVaL",
+              "name": "完成说明",
+              "fill": "$muted",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "进度按具体子任务汇总",
+              "fontFamily": "Noto Sans SC",
+              "fontSize": 13,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "KuyIn",
+          "name": "底部标签与安全区",
+          "width": "fill_container",
+          "height": 84,
+          "fill": "$surface",
+          "stroke": "$line",
+          "strokeWidth": {
+            "top": 1
+          },
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "RNvBf",
+              "name": "标签栏",
+              "width": "fill_container",
+              "height": 58,
+              "gap": 16,
+              "justifyContent": "space_around",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "KqaLQ",
+                  "name": "今日",
+                  "width": 90,
+                  "height": 52,
+                  "layout": "vertical",
+                  "gap": 2,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "WXnEg",
+                      "name": "sun",
+                      "width": 20,
+                      "height": 20,
+                      "icon": "list-todo",
+                      "library": "lucide",
+                      "fill": "$primary"
+                    },
+                    {
+                      "type": "text",
+                      "id": "k2U7FN",
+                      "name": "标签",
+                      "fill": "$primary",
+                      "content": "待办",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "FQcDy",
+                  "name": "计划",
+                  "width": 90,
+                  "height": 52,
+                  "layout": "vertical",
+                  "gap": 2,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "bA85s",
+                      "name": "layers",
+                      "width": 20,
+                      "height": 20,
+                      "icon": "layers",
+                      "library": "lucide",
+                      "fill": "$muted"
+                    },
+                    {
+                      "type": "text",
+                      "id": "TSFyL",
+                      "name": "标签",
+                      "fill": "$muted",
+                      "content": "计划",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "S1Xki",
+                  "name": "回顾",
+                  "width": 90,
+                  "height": 52,
+                  "layout": "vertical",
+                  "gap": 2,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "XmF7e",
+                      "name": "chart-no-axes-column",
+                      "width": 20,
+                      "height": 20,
+                      "icon": "chart-no-axes-column",
+                      "library": "lucide",
+                      "fill": "$muted"
+                    },
+                    {
+                      "type": "text",
+                      "id": "r7CZ9A",
+                      "name": "标签",
+                      "fill": "$muted",
+                      "content": "回顾",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "hGs3n",
+              "name": "安全区",
+              "width": "fill_container",
+              "height": 26,
+              "layout": "vertical",
+              "gap": 16,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 3,
+                  "id": "yEH0U",
+                  "name": "Home indicator",
+                  "fill": "$ink",
+                  "width": 134,
+                  "height": 5
+                }
+              ]
+            }
+          ]
         }
       ]
     }

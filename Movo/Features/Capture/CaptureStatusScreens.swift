@@ -257,7 +257,7 @@ public struct CaptureResultScreen: View {
             }
 
             HStack(spacing: MovoSpace.s) {
-                MovoButton("返回今日", kind: .primary) {
+                MovoButton("返回待办", kind: .primary) {
                     router.go(to: .section(.today), in: .today)
                 }
                 if let batchID = env.lastBatchNotice?.batchID, env.lastBatchNotice?.canUndo == true {

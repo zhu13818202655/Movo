@@ -43,12 +43,20 @@ public enum StructurePolicy {
 
     // MARK: - 任务结构（C1/C2/C3/C4）
 
-    public static func validateTaskStructure(_ task: Task, repository: DomainRepository) async throws {
+    public static func validateTaskStructure(_ task: Task, repository: DomainRepository,
+                                             requiresRecurrenceRule: Bool = true) async throws {
         // C8
         try await requireWritable(id: task.id, type: .task, repository: repository)
+        if task.isTemplate {
+            let deleted = Set(await repository.tombstones(activeOnly: true).map(\.entityId))
+            let children = await repository.children(of: task.id)
+            if children.contains(where: { !deleted.contains($0.id) && $0.status != .cancelled }) {
+                throw MovoError.invalidStructure(reason: "有子任务的待办不能设为重复行动。")
+            }
+        }
 
         // C4：isTemplate 必须存在 RecurrenceRule
-        if task.isTemplate {
+        if task.isTemplate && requiresRecurrenceRule {
             let rule = await repository.rule(forTask: task.id)
             if rule == nil {
                 throw MovoError.invalidStructure(reason: "重复行动必须带有重复频率。请先设置频率再保存。")
@@ -57,6 +65,7 @@ public enum StructurePolicy {
 
         // 归属计划必须在（未删除）
         if let planID = task.planId {
+            try await requireWritable(id: planID, type: .plan, repository: repository)
             guard let plan = await repository.plan(planID) else {
                 throw MovoError.notFound(entityType: .plan, id: planID)
             }
@@ -67,6 +76,7 @@ public enum StructurePolicy {
 
         // 阶段归属
         if let stageID = task.stageId {
+            try await requireWritable(id: stageID, type: .stage, repository: repository)
             guard let stage = await repository.stage(stageID) else {
                 throw MovoError.notFound(entityType: .stage, id: stageID)
             }
@@ -85,31 +95,41 @@ public enum StructurePolicy {
             throw MovoError.notFound(entityType: .task, id: parentID)
         }
         try await requireWritable(id: parentID, type: .task, repository: repository)
+        if parent.status == .cancelled {
+            throw MovoError.invalidStructure(reason: "上级待办已取消，请先重新打开。")
+        }
 
         // C1：子任务必须与父任务同计划
         if parent.planId != task.planId {
             throw MovoError.invalidStructure(reason: "子任务和父任务必须在同一个计划下。")
         }
-        // C2：只允许一层
-        if parent.parentId != nil {
-            throw MovoError.invalidStructure(reason: "子任务只支持一层，不能再嵌套。")
+        if parent.stageId != task.stageId {
+            throw MovoError.invalidStructure(reason: "子任务和父任务必须在同一个阶段下。")
         }
-        // C3：父链不得成环
-        try await assertNoParentCycle(startingAt: task.id, repository: repository)
+        if parent.isTemplate || task.isTemplate {
+            throw MovoError.invalidStructure(reason: "重复行动独立管理，暂不能作为父任务或子任务。")
+        }
+        // 校验候选父链，不能从仓储中的旧 task 开始（新建时尚未落库）。
+        var seen: Set<UUID> = [task.id]
+        var cursor: UUID? = parentID
+        while let id = cursor {
+            guard seen.insert(id).inserted else {
+                throw MovoError.invalidStructure(reason: "任务的上下级关系形成了环。")
+            }
+            cursor = await repository.task(id)?.parentId
+        }
     }
 
     /// C3：沿 parentId 链向上，不得回到起点
     static func assertNoParentCycle(startingAt taskID: UUID, repository: DomainRepository) async throws {
         var seen: Set<UUID> = [taskID]
         var cursor = taskID
-        var hops = 0
-        while hops < 64, let current = await repository.task(cursor), let parentID = current.parentId {
+        while let current = await repository.task(cursor), let parentID = current.parentId {
             if seen.contains(parentID) {
                 throw MovoError.invalidStructure(reason: "任务的上下级关系形成了环。")
             }
             seen.insert(parentID)
             cursor = parentID
-            hops += 1
         }
     }
 
@@ -122,10 +142,7 @@ public enum StructurePolicy {
         if parent.planId != child.planId {
             throw MovoError.invalidStructure(reason: "子任务和父任务必须在同一个计划下。")
         }
-        if parent.parentId != nil {
-            throw MovoError.invalidStructure(reason: "子任务只支持一层，不能再嵌套。")
-        }
-        if await hasDescendant(parent.id, ancestor: child.id, repository: repository) {
+        if await hasDescendant(child.id, ancestor: parent.id, repository: repository) {
             throw MovoError.invalidStructure(reason: "任务的上下级关系会形成环。")
         }
     }

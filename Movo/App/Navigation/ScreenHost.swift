@@ -34,6 +34,9 @@ public struct ScreenHost: View {
 
         // 任务
         case .taskDetail(let taskID): TaskDetailScreen(taskID: taskID)
+        case .newTask(let planID, let parentID, let scheduledToday):
+            NewTaskSheet(planID: planID, parentID: parentID, scheduledToday: scheduledToday)
+        case .moveTask(let taskID): MoveTaskSheet(taskID: taskID)
 
         // 记录与结果
         case .metricHistory(let metricID): MetricHistoryScreen(metricID: metricID)

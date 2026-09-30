@@ -107,6 +107,7 @@ public final class DomainStore {
 
         for command in input.commands {
             if idempotencyCache[command.operationID] != nil { continue }
+            if await repository.operation(command.operationID)?.status == .applied { continue }
             try await repository.beginTransaction()
             do {
                 let ctx = CommandContext(repository: repository, now: stamp, today: today,
@@ -139,7 +140,7 @@ public final class DomainStore {
         }
 
         // 批元数据（部分成功也留批，便于整批撤销）
-        if applied.count + rejected.count > 1 || input.captureId != nil {
+        if !applied.isEmpty || !rejected.isEmpty || input.captureId != nil {
             let state: BatchState = rejected.isEmpty ? .applied : (applied.isEmpty ? .failed : .partial)
             let batch = OperationBatch(id: batchID, captureId: input.captureId, source: input.source,
                                        createdAt: stamp, deviceId: deviceId, state: state,
@@ -179,6 +180,9 @@ public final class DomainStore {
         guard let batch = await repository.batch(batchID) else {
             throw MovoError.notFound(entityType: .batch, id: batchID)
         }
+        if batch.state == .undone {
+            return UndoResult(batchId: batchID, undoneOperations: [], unsafeOperations: [], nonUndoableOperations: [])
+        }
         let operations = await repository.operations(batchID: batchID)
         let stamp = clock.now()
         let tz = timeZoneProvider.current()
@@ -195,10 +199,28 @@ public final class DomainStore {
             guard op.kind.isUndoable else {
                 nonUndoable.append((op.id, op.kind)); skipped.insert(op.id); continue
             }
-            let events = await repository.events(entityID: op.entityId)
-            let newer = events.filter { $0.newRevision > max(op.baseRevision, 1) && $0.operationId != op.id }
-            if !newer.isEmpty {
-                unsafe.append((op.id, "「\(op.kind.displayName)」之后又有了 \(newer.count) 次修改，撤销会覆盖它们，已跳过。"))
+            let allEvents = await repository.allEvents()
+            let ownEvents = allEvents.filter { $0.operationId == op.id && $0.entityType != .operation }
+            let newer = ownEvents.flatMap { own in
+                allEvents.filter { event in
+                    event.entityId == own.entityId && event.newRevision > own.newRevision
+                        && !operations.contains(where: { operation in operation.id == event.operationId })
+                }
+            }
+            let structural = ownEvents.contains {
+                $0.entityType == .task && ($0.patch["planId"] != nil
+                    || $0.patch["stageId"] != nil || $0.patch["parentId"] != nil)
+            }
+            let descendants = op.kind == .createTask || structural
+                ? TaskHierarchy.descendants(of: op.entityId, in: await repository.allTasks()) : []
+            let affectedTasks = Set(ownEvents.filter { $0.entityType == .task }.map(\.entityId))
+            let deleted = Set(await repository.tombstones(activeOnly: true).map(\.entityId))
+            let externalChildren = descendants.contains { child in
+                !deleted.contains(child.id) && !affectedTasks.contains(child.id)
+                    && !operations.contains { $0.kind == .createTask && $0.entityId == child.id }
+            }
+            if !newer.isEmpty || externalChildren {
+                unsafe.append((op.id, "「\(op.kind.displayName)」之后有新的修改或子任务，已保留这项操作。"))
                 skipped.insert(op.id)
             }
         }
@@ -282,8 +304,10 @@ public final class DomainStore {
                 t.updatedAt = ctx.now
                 _ = try await ctx.write(t, old: task)
             }
-        case .scheduleTask, .setDeadline, .updateTask, .updatePlan, .updateStage, .updateMetric,
-             .reassignTask, .changeRecurrence, .addDependency, .removeDependency,
+        case .reassignTask, .updateTask:
+            try await ReassignTask.undo(operationID: op.id, context: ctx)
+        case .scheduleTask, .setDeadline, .updatePlan, .updateStage, .updateMetric,
+             .changeRecurrence, .addDependency, .removeDependency,
              .pausePlan, .resumePlan:
             // 恢复 patch.old
             try await restoreOldValues(op: op, in: ctx)
@@ -301,7 +325,7 @@ public final class DomainStore {
                 ss.acceptedTaskId = nil
                 _ = try await ctx.write(ss, old: s)
             }
-        case .deletePlan, .restoreEntity, .resolveConflict, .undoBatch, .batchOperation,
+        case .deletePlan, .deleteTask, .restoreEntity, .resolveConflict, .undoBatch, .batchOperation,
              .processCapture, .addSuggestion:
             break
         }
@@ -329,18 +353,11 @@ public final class DomainStore {
             _ = try await ctx.write(plan, old: existing)
         case .task:
             guard let existing = await ctx.repository.task(op.entityId) else { return }
-            var task = existing
-            if let patch = payload["scheduledDate"] {
-                task.scheduledDate = patch.old.isNull
-                    ? nil
-                    : DateOnly(iso8601DateString: patch.old.stringValue ?? "", sourceTZ: ctx.timeZone.identifier)
-            }
-            if let patch = payload["hardDeadline"] {
-                task.hardDeadline = patch.old.isNull ? nil : patch.old.objectDate()
-            }
-            if let v = payload["title"]?.old.stringValue { task.title = v }
-            if let v = payload["status"]?.old.stringValue, let s = TaskStatus(rawValue: v) { task.status = s }
-            if let v = payload["dependencyIDs"]?.old.arrayUUIDs() { task.dependencyIDs = v }
+            var values = try JSONDiff.dictionary(existing)
+            for (field, patch) in payload where field != "revision" { values[field] = patch.old }
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            var task = try decoder.decode(Task.self, from: JSONEncoder().encode(values))
             task.updatedAt = ctx.now
             _ = try await ctx.write(task, old: existing)
         case .stage:
@@ -399,7 +416,6 @@ public final class DomainStore {
                                                entityID: existing.entityId,
                                                userMessage: existing.reason ?? "这项更改已经保存过了。",
                                                newRevision: existing.baseRevision)
-                    idempotencyCache[command.operationID] = replay
                     results.append(replay)
                     continue
                 }
@@ -421,11 +437,10 @@ public final class DomainStore {
                                           createdAt: stamp)
                 _ = try await ctx.write(operation, old: nil)
                 results.append(result)
-                idempotencyCache[command.operationID] = result
             }
 
             // 批量记录
-            if commands.count > 1 || captureID != nil {
+            if !results.isEmpty {
                 let batch = OperationBatch(id: bid, captureId: captureID, source: source,
                                            createdAt: stamp, deviceId: deviceId, state: .applied,
                                            summary: summary.isEmpty
@@ -435,6 +450,7 @@ public final class DomainStore {
             }
 
             try await repository.commitTransaction()
+            for result in results { idempotencyCache[result.operationID] = result }
         } catch {
             try? await repository.rollbackTransaction()
             throw error
@@ -447,7 +463,7 @@ public final class DomainStore {
                 batchID: bid, entityIDs: results.compactMap(\.entityID), kinds: kinds,
                 summary: results.count == 1 ? (results[0].userMessage)
                                             : (summary.isEmpty ? "已整理 \(results.count) 项 · 可撤销" : summary),
-                canUndo: true, at: stamp)
+                canUndo: commands.contains { $0.kind.isUndoable }, at: stamp)
             notifications.append(notification)
             if notifications.count > 50 { notifications.removeFirst(notifications.count - 50) }
             lastNotification = notification

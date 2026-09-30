@@ -79,13 +79,17 @@ public extension DomainStore {
                                                           planID: nil)
         for occurrence in scheduledToday {
             let task = await repository.task(occurrence.taskId)
+            guard let task, !tombstones.contains(occurrence.id), !tombstones.contains(task.id),
+                  !tombstones.contains(occurrence.ruleId), task.status != .cancelled,
+                  task.planId.map({ tombstones.contains($0) || planIndex[$0]?.status == .archived }) != true
+            else { continue }
             let planName = occurrence.planId.flatMap { planIndex[$0]?.name }
             let item = TodayItem(id: "occ-\(occurrence.id.uuidString)",
                                  body: .occurrence(occurrence: occurrence, task: task),
                                  section: occurrence.status == .done ? .completed : .focus,
                                  planName: planName,
                                  dependency: .ready,
-                                 timeHint: task?.timeHint,
+                                 timeHint: task.timeHint,
                                  isCompletedToday: occurrence.status == .done)
             guard seen.insert(item.id).inserted else { continue }
             if occurrence.status == .done { completed.append(item) } else { focus.append(item) }
@@ -94,7 +98,7 @@ public extension DomainStore {
         // 2. 今天的行动记录（周内记录不计入今日列表，仅用于计数）
 
         let allTasks = await repository.allTasks()
-        let visible = allTasks.filter { $0.parentId == nil || $0.status.isOpen }
+        let visible = allTasks
 
         for task in visible {
             if task.isTemplate { continue }
@@ -103,7 +107,7 @@ public extension DomainStore {
             if plan?.status == .archived { continue }
 
             let isDoneToday = task.status == .done && task.doneAt.map { sameDay($0, date) } ?? false
-            let deadlineToday = task.hardDeadline.map { $0.dateOnly == date } ?? false
+            let deadlineToday = task.hardDeadline.map { $0.dateOnly <= date } ?? false
 
             if isDoneToday {
                 let item = TodayItem(id: "task-\(task.id.uuidString)", body: .scheduled(task: task),
@@ -140,11 +144,7 @@ public extension DomainStore {
                                      section: .later, planName: plan?.name, dependency: state,
                                      timeHint: task.timeHint)
                 if seen.insert(item.id).inserted { later.append(item) }
-            } else if task.scheduledDate == nil {
-                let item = TodayItem(id: "task-\(task.id.uuidString)", body: .floating(task: task),
-                                     section: .later, planName: plan?.name, dependency: state,
-                                     timeHint: task.timeHint)
-                if seen.insert(item.id).inserted { later.append(item) }
+
             }
         }
 
@@ -195,11 +195,11 @@ public extension DomainStore {
                 if !haystack.localizedCaseInsensitiveContains(text) { continue }
             }
 
-            let tasks = await repository.tasks(planID: plan.id)
+            let tasks = await repository.tasks(planID: plan.id).filter { !tombstones.contains($0.id) }
             let metrics = await repository.metrics(planID: plan.id)
             let measurements = await repository.measurements(planID: plan.id)
             let rules = await repository.rules().filter { r in tasks.contains { $0.id == r.taskId } }
-            let occurrences = await repository.occurrences(planID: plan.id)
+            let occurrences = await repository.occurrences(planID: plan.id).filter { !tombstones.contains($0.id) }
 
             let progress = ProgressPolicy.progressFor(plan: plan, tasks: tasks, rules: rules,
                                                       occurrences: occurrences, metrics: metrics,
@@ -240,11 +240,12 @@ public extension DomainStore {
         guard let plan = await repository.plan(planID) else {
             return .empty(reason: "找不到这个计划")
         }
-        let tasks = await repository.tasks(planID: planID)
+        let deleted = Set(await repository.tombstones(activeOnly: true).map(\.entityId))
+        let tasks = await repository.tasks(planID: planID).filter { !deleted.contains($0.id) }
         let metrics = await repository.metrics(planID: planID)
         let measurements = await repository.measurements(planID: planID)
         let rules = await repository.rules().filter { r in tasks.contains { $0.id == r.taskId } }
-        let occurrences = await repository.occurrences(planID: planID)
+        let occurrences = await repository.occurrences(planID: planID).filter { !deleted.contains($0.id) }
         return ProgressPolicy.progressFor(plan: plan, tasks: tasks, rules: rules,
                                           occurrences: occurrences, metrics: metrics,
                                           measurements: measurements,
@@ -285,75 +286,32 @@ public extension DomainStore {
             return (current.sorted { ($0.scheduledOn ?? today) < ($1.scheduledOn ?? today) }, historical)
         }
 
-        func buildTaskNode(_ task: Task, level: Int) -> PlanTreeNode {
+        func buildTaskNode(_ task: Task, level: Int, visited: Set<UUID> = []) -> PlanTreeNode {
             let info = occurrenceInfo(for: task)
+            var next = visited
+            next.insert(task.id)
+            let kids = TaskHierarchy.ordered(liveTasks.filter {
+                $0.parentId == task.id && $0.status != .cancelled && !next.contains($0.id)
+            })
             return PlanTreeNode(
-                id: task.id.uuidString,
-                kind: .task(task),
-                children: [],
-                hasHiddenChildren: false,
-                hiddenChildCount: 0,
+                id: task.id.uuidString, kind: .task(task),
+                children: kids.map { buildTaskNode($0, level: level + 1, visited: next) },
                 dependency: depStates[task.id] ?? .ready,
-                currentOccurrences: info.current,
-                historicalOccurrenceCount: info.historical,
+                currentOccurrences: info.current, historicalOccurrenceCount: info.historical,
                 isCancelled: task.status == .cancelled)
         }
 
-        func buildGroupChildren(_ parent: Task, level: Int) -> [PlanTreeNode] {
-            let kids = liveTasks.filter { $0.parentId == parent.id && $0.status != .cancelled }
-            return kids.map { buildTaskNode($0, level: level + 1) }
-        }
-
         var nodes: [PlanTreeNode] = []
-
         for stage in stages {
-            let stageTasks = visible.filter { $0.stageId == stage.id }
             let rollup = ProgressPolicy.stageRollup(stageID: stage.id, tasks: liveTasks)
-            let children: [PlanTreeNode] = stageTasks.map { task in
-                let kids = buildGroupChildren(task, level: 1)
-                if kids.isEmpty { return buildTaskNode(task, level: 1) }
-                let groupRoll = ProgressPolicy.groupRollup(parentID: task.id, tasks: liveTasks)
-                let info = occurrenceInfo(for: task)
-                return PlanTreeNode(
-                    id: task.id.uuidString,
-                    kind: .group(title: task.title, done: groupRoll.done, total: groupRoll.total,
-                                 children: kids),
-                    children: kids,
-                    hasHiddenChildren: false,
-                    hiddenChildCount: 0,
-                    dependency: depStates[task.id] ?? .ready,
-                    currentOccurrences: info.current,
-                    historicalOccurrenceCount: info.historical)
-            }
-            nodes.append(PlanTreeNode(
-                id: stage.id.uuidString,
-                kind: .stage(stage, done: rollup.done, total: rollup.total),
-                children: depth >= 1 ? children : [],
-                hasHiddenChildren: depth < 1 && !children.isEmpty,
-                hiddenChildCount: children.count))
+            let children = TaskHierarchy.ordered(visible.filter { $0.stageId == stage.id })
+                .map { buildTaskNode($0, level: 1) }
+            nodes.append(PlanTreeNode(id: stage.id.uuidString,
+                                     kind: .stage(stage, done: rollup.done, total: rollup.total),
+                                     children: children))
         }
-
-        // 未挂阶段的顶层任务
-        let orphan = visible.filter { $0.stageId == nil }
-        for task in orphan {
-            let kids = buildGroupChildren(task, level: 0)
-            if kids.isEmpty {
-                nodes.append(buildTaskNode(task, level: 0))
-            } else {
-                let groupRoll = ProgressPolicy.groupRollup(parentID: task.id, tasks: liveTasks)
-                let info = occurrenceInfo(for: task)
-                nodes.append(PlanTreeNode(
-                    id: task.id.uuidString,
-                    kind: .group(title: task.title, done: groupRoll.done, total: groupRoll.total,
-                                 children: depth >= 1 ? kids : []),
-                    children: depth >= 1 ? kids : [],
-                    hasHiddenChildren: depth < 1,
-                    hiddenChildCount: kids.count,
-                    dependency: depStates[task.id] ?? .ready,
-                    currentOccurrences: info.current,
-                    historicalOccurrenceCount: info.historical))
-            }
-        }
+        nodes.append(contentsOf: TaskHierarchy.ordered(visible.filter { $0.stageId == nil })
+            .map { buildTaskNode($0, level: 0) })
 
         // 已取消事项默认隐藏，但可从历史筛选中查找
         if !cancelled.isEmpty {

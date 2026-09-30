@@ -165,7 +165,7 @@ public struct Task: Identifiable, Hashable, Sendable, Codable {
     public var id: UUID
     public var planId: UUID?
     public var stageId: UUID?
-    /// 仅允许一层子任务（C2）
+    /// 支持多级子任务；父子同计划、同阶段，父链不得成环。
     public var parentId: UUID?
     public var title: String                       // ≤ 200 字
     public var notes: String?

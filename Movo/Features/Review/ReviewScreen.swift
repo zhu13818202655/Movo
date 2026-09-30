@@ -58,7 +58,7 @@ public struct ReviewScreen: View {
                 MovoEmptyState(systemImage: "chart.bar.doc.horizontal",
                                title: view.emptyStateText,
                                message: "没有记录时，我们不猜原因。可以补记一条，或者什么都不写。",
-                               actionTitle: "去今日记一条",
+                               actionTitle: "去添加待办",
                                action: { router.select(.today) })
                     .frame(minHeight: 260)
             } else {

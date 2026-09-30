@@ -223,7 +223,7 @@ public struct StageTreeNodeRow: View {
         HStack(alignment: .center, spacing: MovoSpace.s) {
             // 连接线 + 缩进
             HStack(spacing: 0) {
-                ForEach(0..<max(depth, 0), id: \.self) { _ in
+                ForEach(0..<min(max(depth, 0), 4), id: \.self) { _ in
                     Rectangle().fill(MovoColor.line).frame(width: 1).padding(.leading, MovoSpace.m)
                 }
             }
@@ -286,7 +286,8 @@ public struct StageTreeNodeRow: View {
     }
 
     private var subtitle: String? {
-        switch node.kind {
+        if let progress = node.childProgress { return "子任务 \(progress.done)/\(progress.total)" }
+        return switch node.kind {
         case .stage(_, let done, let total): "已完成 \(done)/\(total)"
         case .group(_, let done, let total, _): "\(done)/\(total)"
         case .task:
@@ -295,6 +296,9 @@ public struct StageTreeNodeRow: View {
     }
 
     private var statusTag: TaskStatus? {
+        if let progress = node.childProgress {
+            return progress.total > 0 && progress.done == progress.total ? .done : .inProgress
+        }
         if case .task(let task) = node.kind, task.status != .todo { return task.status }
         return nil
     }

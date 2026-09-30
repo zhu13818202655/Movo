@@ -3,7 +3,7 @@
 //  App/Navigation
 //
 //  双端外壳：
-//  · iPhone 393×852：单列 + 底部标签（今日/计划/回顾），收件箱与搜索从顶部进入。
+//  · iPhone 393×852：单列 + 底部标签（待办/计划/回顾），收件箱与搜索从顶部进入。
 //  · Mac 1440×960：约 220 宽左侧导航 + 主内容 + 按需 320 宽详情面板，设置放底部。
 //
 
@@ -165,6 +165,8 @@ private struct SheetHost: View {
 
     var body: some View {
         ScreenHost(route: route)
-            .frame(minWidth: 380, minHeight: 420)
+            #if os(macOS)
+            .frame(minWidth: 420, minHeight: 420)
+            #endif
     }
 }

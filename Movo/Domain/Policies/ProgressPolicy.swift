@@ -29,10 +29,8 @@ public enum ProgressPolicy {
 
     /// 分组汇总（父任务）——与阶段确认是不同状态
     public static func groupRollup(parentID: UUID, tasks: [Task]) -> (done: Int, total: Int) {
-        let scoped = tasks.filter { $0.parentId == parentID }
-        let done = scoped.filter { $0.status == .done && $0.countsTowardProgress }.count
-        let total = scoped.filter(\.countsTowardProgress).count
-        return (done, total)
+        let scoped = TaskHierarchy.descendants(of: parentID, in: tasks)
+        return deliveryLeaves(in: scoped)
     }
 
     // MARK: - 主入口

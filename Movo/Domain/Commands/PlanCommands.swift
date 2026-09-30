@@ -357,6 +357,40 @@ public struct RestoreEntity: DomainCommand {
         guard tombstone.isRecoverable(at: context.now) else {
             throw MovoError.invalidStructure(reason: "这项内容已超过 30 天保留期，无法恢复。")
         }
+        if targetType == .task, let task = await context.repository.task(targetID) {
+            if let planID = task.planId {
+                try await StructurePolicy.requireWritable(id: planID, type: .plan, repository: context.repository)
+            }
+            if let parentID = task.parentId {
+                try await StructurePolicy.requireWritable(id: parentID, type: .task, repository: context.repository)
+            }
+            // 只恢复同一次删除中的后代，不能复活之前单独删除的内容。
+            let ids = Set([targetID] + TaskHierarchy.descendants(
+                of: targetID, in: await context.repository.allTasks()).map(\.id))
+            let events = await context.repository.events(entityID: tombstone.id)
+            if let deletion = events.first(where: { $0.baseRevision == 0 }) {
+                let relatedEvents = await context.repository.allEvents().filter {
+                    $0.operationId == deletion.operationId && $0.entityType == .tombstone
+                }
+                let relatedIDs = Set(relatedEvents.map(\.entityId))
+                for candidate in all where candidate.id != tombstone.id
+                    && relatedIDs.contains(candidate.id) && candidate.isRecoverable(at: context.now) {
+                    var belongs = ids.contains(candidate.entityId)
+                    if candidate.entityType == .rule, let rule = await context.repository.rule(candidate.entityId) {
+                        belongs = ids.contains(rule.taskId)
+                    }
+                    if candidate.entityType == .occurrence,
+                       let occurrence = await context.repository.occurrence(candidate.entityId) {
+                        belongs = ids.contains(occurrence.taskId)
+                    }
+                    if belongs {
+                        var restoredChild = candidate
+                        restoredChild.restoredAt = context.now
+                        _ = try await context.write(restoredChild, old: candidate)
+                    }
+                }
+            }
+        }
         var restored = tombstone
         restored.restoredAt = context.now
         let saved = try await context.write(restored, old: tombstone)

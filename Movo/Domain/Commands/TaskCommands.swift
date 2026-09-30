@@ -82,7 +82,8 @@ public struct CreateTask: DomainCommand {
             try await StructurePolicy.validateDependency(taskID: task.id, dependsOn: dep,
                                                          repository: context.repository)
         }
-        try await StructurePolicy.validateTaskStructure(task, repository: context.repository)
+        try await StructurePolicy.validateTaskStructure(task, repository: context.repository,
+                                                       requiresRecurrenceRule: recurrence == nil)
 
         // C4：模板任务必须先有规则——先落任务再落规则，随后复校验
         let saved = try await context.write(task, old: nil)
@@ -96,6 +97,7 @@ public struct CreateTask: DomainCommand {
             rule.createdAt = context.now
             try StructurePolicy.validateRuleFields(rule)
             _ = try await context.write(rule, old: nil)
+            try await StructurePolicy.validateTaskStructure(saved, repository: context.repository)
         } else if task.isTemplate {
             throw MovoError.invalidStructure(reason: "重复行动必须带有重复频率。")
         }
@@ -201,7 +203,27 @@ public struct UpdateTask: DomainCommand {
         try await StructurePolicy.requireWritable(id: taskID, type: .task, repository: context.repository)
         try context.assertDeclaredRevision(actual: old.revision, entityID: taskID)
 
-        var updated = patch.apply(to: old)
+        var baseline = old
+        let changesStructure = patch.parentID.map { $0 != old.parentId } == true
+            || patch.planID.map { $0 != old.planId } == true
+            || patch.stageID.map { $0 != old.stageId } == true
+        if changesStructure {
+            let parent = patch.parentID ?? ((patch.planID != nil || patch.stageID != nil) ? nil : old.parentId)
+            let stage = patch.stageID ?? (patch.planID.map { $0 != old.planId } == true ? nil : old.stageId)
+            _ = try await ReassignTask(operationID: operationID, taskID: taskID,
+                                       planID: patch.planID ?? old.planId,
+                                       stageID: stage,
+                                       baseRevision: old.revision, parentID: parent).execute(in: context)
+            baseline = await context.repository.task(taskID) ?? old
+        }
+        var updated = patch.apply(to: baseline)
+        if patch.status == .done || patch.status == .cancelled {
+            let deleted = Set(await context.repository.tombstones(activeOnly: true).map(\.entityId))
+            let children = await context.repository.children(of: taskID)
+            if children.contains(where: { !deleted.contains($0.id) && $0.status != .cancelled }) {
+                throw MovoError.invalidStructure(reason: "请逐项处理子任务；父任务进度会自动汇总。")
+            }
+        }
         if let title = patch.title { try StructurePolicy.validateTitle(title) }
         if !aiSuggestedFields.isEmpty {
             updated.suggestedFields = Array(Set(old.suggestedFields + aiSuggestedFields)).sorted()
@@ -220,7 +242,7 @@ public struct UpdateTask: DomainCommand {
         }
         try await StructurePolicy.validateTaskStructure(updated, repository: context.repository)
 
-        let saved = try await context.write(updated, old: old)
+        let saved = try await context.write(updated, old: baseline)
         context.setUserMessage("已更新「\(saved.title)」")
         return CommandResult(operationID: operationID, entityID: saved.id,
                              changedFields: context.changedFields,
@@ -326,6 +348,12 @@ public struct CompleteTask: DomainCommand {
         try context.assertDeclaredRevision(actual: old.revision, entityID: taskID)
         guard old.status != .done else {
             throw MovoError.invalidStructure(reason: "「\(old.title)」已经完成了。")
+        }
+
+        let deleted = Set(await context.repository.tombstones(activeOnly: true).map(\.entityId))
+        let children = await context.repository.children(of: taskID)
+        if children.contains(where: { !deleted.contains($0.id) && $0.status != .cancelled }) {
+            throw MovoError.invalidStructure(reason: "这项待办的进度由子任务汇总，请完成具体子任务。")
         }
 
         // 模板任务 → 转 CompleteOccurrence（当次完成不影响未来实例 AC13）
@@ -473,6 +501,12 @@ public struct CancelTask: DomainCommand {
         try context.assertDeclaredRevision(actual: old.revision, entityID: taskID)
         var updated = old
         updated.status = .cancelled
+        try await StructurePolicy.requireWritable(id: taskID, type: .task, repository: context.repository)
+        let deleted = Set(await context.repository.tombstones(activeOnly: true).map(\.entityId))
+        let children = await context.repository.children(of: taskID)
+        if children.contains(where: { !deleted.contains($0.id) && $0.status != .cancelled }) {
+            throw MovoError.invalidStructure(reason: "请逐项取消子任务，或预览后删除整项待办。")
+        }
         updated.cancelledAt = context.now
         updated.updatedAt = context.now
         context.setReason(reason)
@@ -499,16 +533,16 @@ public struct ReassignTask: DomainCommand {
     public var baseRevision: Int
     public var planID: UUID?
     public var stageID: UUID?
-    /// 保留原归类理由（REQ 06）
+    public var parentID: UUID?
     public var reason: String?
-    /// true = 保持独立事项
     public var keepStandalone: Bool
 
     public init(operationID: UUID = UUID(), taskID: UUID, planID: UUID?, stageID: UUID? = nil,
-                baseRevision: Int = 0, reason: String? = nil, keepStandalone: Bool = false) {
+                baseRevision: Int = 0, reason: String? = nil, keepStandalone: Bool = false,
+                parentID: UUID? = nil) {
         self.operationID = operationID; self.taskID = taskID; self.planID = planID
         self.stageID = stageID; self.baseRevision = baseRevision; self.reason = reason
-        self.keepStandalone = keepStandalone
+        self.keepStandalone = keepStandalone; self.parentID = parentID
     }
 
     @MainActor
@@ -516,34 +550,92 @@ public struct ReassignTask: DomainCommand {
         guard let old = await context.repository.task(taskID) else {
             throw MovoError.notFound(entityType: .task, id: taskID)
         }
+        try await StructurePolicy.requireWritable(id: taskID, type: .task, repository: context.repository)
         try context.assertDeclaredRevision(actual: old.revision, entityID: taskID)
-        // C7：目标 archived 时拦截
-        try await StructurePolicy.validateExplicitReassign(to: planID, repository: context.repository)
-
-        var updated = old
-        updated.planId = planID
-        updated.stageId = stageID
-        // 换计划后原前置不再适用（C9 不允许跨计划），但已有的同计划前置保留
-        if planID != old.planId {
-            var valid: Set<UUID> = []
-            if let planID { valid = Set(await context.repository.tasks(planID: planID).map(\.id)) }
-            let removed = updated.dependencyIDs.filter { !valid.contains($0) }
-            updated.dependencyIDs = updated.dependencyIDs.filter { valid.contains($0) }
-            context.addReleasedDependencies(removed.count)
+        let deleted = Set(await context.repository.tombstones(activeOnly: true).map(\.entityId))
+        let all = await context.repository.allTasks()
+        let descendants = TaskHierarchy.descendants(of: taskID, in: all)
+        let moving = [old] + descendants.filter { !deleted.contains($0.id) }
+        let ids = Set(moving.map(\.id))
+        var destinationPlan = keepStandalone ? nil : planID
+        var destinationStage = keepStandalone ? nil : stageID
+        if let parentID {
+            guard !ids.contains(parentID), let parent = await context.repository.task(parentID) else {
+                throw MovoError.invalidStructure(reason: "不能移动到自己或自己的子任务下。")
+            }
+            destinationPlan = parent.planId
+            destinationStage = parent.stageId
         }
-        updated.updatedAt = context.now
+        try await StructurePolicy.validateExplicitReassign(to: destinationPlan, repository: context.repository)
         context.setReason(reason)
-        let saved = try await context.write(updated, old: old)
-
-        if keepStandalone {
-            context.setUserMessage("已保持为独立事项，不会加入任何计划。")
-        } else if let planID, let plan = await context.repository.plan(planID) {
-            context.setUserMessage("已归入「\(plan.name)」")
-        } else {
-            context.setUserMessage("已改为独立事项")
+        for task in moving {
+            var updated = task
+            updated.planId = destinationPlan
+            updated.stageId = destinationStage
+            if task.id == taskID { updated.parentId = parentID }
+            // 跨计划解除外部前置，保留同一子树内部的前置关系。
+            if destinationPlan != task.planId {
+                updated.dependencyIDs = task.dependencyIDs.filter { id in
+                    destinationPlan != nil && (ids.contains(id) || all.contains {
+                        $0.id == id && $0.planId == destinationPlan && !deleted.contains(id)
+                    })
+                }
+                context.addReleasedDependencies(task.dependencyIDs.count - updated.dependencyIDs.count)
+            }
+            try await StructurePolicy.validateTaskStructure(updated, repository: context.repository)
+            updated.updatedAt = context.now
+            _ = try await context.write(updated, old: task)
+            // 实例沿用模板的新归属；历史行动记录保留发生时的计划。
+            for occurrence in await context.repository.occurrences(taskID: task.id)
+                where occurrence.planId != destinationPlan && !deleted.contains(occurrence.id) {
+                var updatedOccurrence = occurrence
+                updatedOccurrence.planId = destinationPlan
+                _ = try await context.write(updatedOccurrence, old: occurrence)
+            }
         }
-        return CommandResult(operationID: operationID, entityID: saved.id,
+        // 原计划中的外部任务不能继续依赖已移走的任务。
+        if old.planId != destinationPlan {
+            for task in all where !ids.contains(task.id) && !deleted.contains(task.id) {
+                let dependencies = task.dependencyIDs.filter { !ids.contains($0) }
+                guard dependencies != task.dependencyIDs else { continue }
+                var updated = task
+                updated.dependencyIDs = dependencies
+                updated.updatedAt = context.now
+                _ = try await context.write(updated, old: task)
+            }
+        }
+        context.setUserMessage("已移动「\(old.title)」及 \(moving.count - 1) 项子任务")
+        return CommandResult(operationID: operationID, entityID: taskID,
                              changedFields: context.changedFields,
-                             userMessage: context.userMessage, newRevision: saved.revision)
+                             userMessage: context.userMessage, newRevision: old.revision + 1)
+    }
+
+    @MainActor
+    static func undo(operationID: UUID, context: CommandContext) async throws {
+        let events = await context.repository.allEvents().filter { $0.operationId == operationID }
+            .sorted { $0.newRevision > $1.newRevision }
+        for event in events {
+            if event.entityType == .task, let old = await context.repository.task(event.entityId) {
+                var values = try JSONDiff.dictionary(old)
+                for (field, patch) in event.patch where field != "revision" { values[field] = patch.old }
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .iso8601
+                var restored = try decoder.decode(Task.self, from: JSONEncoder().encode(values))
+                restored.updatedAt = context.now
+                _ = try await context.write(restored, old: old)
+            } else if event.entityType == .occurrence,
+                      let old = await context.repository.occurrence(event.entityId),
+                      let patch = event.patch["planId"] {
+                var restored = old
+                restored.planId = patch.old.stringValue.flatMap(UUID.init(uuidString:))
+                _ = try await context.write(restored, old: old)
+            }
+        }
+        // 所有旧归属恢复后统一验证，避免半棵树回退到已删除的父任务或形成环。
+        for id in Set(events.filter { $0.entityType == .task }.map(\.entityId)) {
+            if let task = await context.repository.task(id) {
+                try await StructurePolicy.validateTaskStructure(task, repository: context.repository)
+            }
+        }
     }
 }

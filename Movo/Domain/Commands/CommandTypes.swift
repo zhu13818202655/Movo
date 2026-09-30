@@ -327,6 +327,9 @@ public final class CommandContext {
         newRevision = new.revision
         touchedEntityIDs.insert(new.id)
         declarePrimary(T.entityType, new.id)
+        if primaryEntityID == new.id && primaryEntityType == T.entityType {
+            mergePatch(diff.patch, fields: diff.fields)
+        }
         return new
     }
 
@@ -425,8 +428,9 @@ public enum JSONDiff {
         }
         let oldDict = try dictionary(old)
         var patch: [String: FieldPatch] = [:]
-        for (k, newValue) in newDict {
+        for k in Set(oldDict.keys).union(newDict.keys) {
             if k == "revision" { continue }
+            let newValue = newDict[k] ?? .null
             let oldValue = oldDict[k] ?? .null
             if oldValue != newValue {
                 patch[k] = FieldPatch(old: oldValue, new: newValue)

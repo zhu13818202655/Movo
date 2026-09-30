@@ -140,7 +140,7 @@ Movo/
 │       └── RootView.swift            双端布局外壳
 │
 ├── Features/                         所有 UI 页面，按功能分区
-│   ├── Today/                        今日
+│   ├── Today/                        待办（保留原目录名）
 │   ├── Inbox/                        收件箱（AI 无法归类的内容）
 │   ├── Plans/                        计划 / 任务 / 快照 / 频率 / 结果记录
 │   ├── Review/                       周回顾
@@ -266,13 +266,14 @@ Movo/
 
 | 目录 | 覆盖界面（设计稿画板） | 代表文件 |
 |---|---|---|
-| `Today/` | D01 / M01 今日 | `TodayScreen.swift` |
+| `Today/` | D01 / M01 待办 | `TodayScreen.swift` |
 | `Inbox/` | D05 / M05 收件箱 | `InboxScreen.swift` |
 | `Plans/` | D02 / M03 / M07 / M11 / M12 计划、任务、快照、频率、结果 | `PlansScreen.swift`、`PlanDetailScreen.swift`、`TaskDetailScreen.swift`、`SnapshotScreen.swift`、`RecurrenceScreens.swift`、`MeasurementScreens.swift` |
 | `Review/` | D08 / M10 周回顾 | `ReviewScreen.swift` |
 | `Search/` | D10 / M06 搜索 | `SearchScreen.swift` |
 | `Settings/` | M13 设置、导出预览、最近删除、冲突裁决 | `SettingsScreen.swift`、`SettingsSections.swift`、`ExportPreviewScreen.swift`、`RecentlyDeletedScreen.swift`、`ConflictResolutionScreen.swift` |
-| `Capture/` | D04 / M04 / M02 输入、录音、转写、整理中、失败 | `CaptureSheets.swift`、`CaptureStatusScreens.swift` |
+| `Plans/NewTaskSheet.swift`、`Shared/TaskOutline.swift` | D04-Manual / M04-Manual 手动创建、M12-Subtasks 多级子任务 | `DomainStore+Todos.swift`、`TaskHierarchy.swift` |
+| `Capture/` | D04 / M04 / M02 AI 输入、录音、转写、整理中、失败 | `CaptureSheets.swift`、`CaptureStatusScreens.swift` |
 | `Shared/` | 页面骨架与共用控件 | `Scaffold.swift`、`FormControls.swift`、`SyncStatusBadge.swift` |
 
 ### 1.11 Tests

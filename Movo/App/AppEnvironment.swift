@@ -359,16 +359,16 @@ public final class AppEnvironment {
         }
     }
 
-    /// 今日快捷新增（D01 / M01 输入入口）
+    /// 待办手动快捷新增（D01 / M01 输入入口）
     @discardableResult
-    public func quickAddTask(title: String, scheduledToday: Bool = true) async -> UUID? {
+    public func quickAddTask(title: String, scheduledToday: Bool = false) async -> UUID? {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         do {
             let result = try await store.execute(CreateTask(
                 title: trimmed,
                 scheduledDate: scheduledToday ? store.today : nil,
-                source: .text))
+                source: .manual))
             lastBatchNotice = store.lastNotification
             return result.entityID
         } catch let error as MovoError {

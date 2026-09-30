@@ -34,7 +34,7 @@ public struct PlanDetailScreen: View {
             }
         }
         .movoPageBackground()
-        .task { await reload() }
+        .task(id: env.store.dataVersion) { await reload() }
     }
 
     // MARK: - 内容
@@ -142,6 +142,9 @@ public struct PlanDetailScreen: View {
     @ViewBuilder
     private func actionsTab(_ detail: PlanDetail) -> some View {
         HStack(spacing: MovoSpace.s) {
+            MovoButton("添加待办", systemImage: "plus", kind: .primary) {
+                router.present(.newTask(planID: planID, parentID: nil, scheduledToday: false))
+            }
             MovoButton("记一次行动", systemImage: "plus", kind: .secondary) {
                 _Concurrency.Task { await logActivity(detail) }
             }
@@ -206,6 +209,14 @@ public struct PlanDetailScreen: View {
                 if isExpanded { expanded.remove(node.id) } else { expanded.insert(node.id) }
             },
             onTap: { open(node) })
+            .contextMenu {
+                if let task = node.task, !task.isTemplate {
+                    Button("添加子任务") {
+                        router.present(.newTask(planID: task.planId, parentID: task.id, scheduledToday: false))
+                    }
+                    Button("移动到…") { router.present(.moveTask(task.id)) }
+                }
+            }
 
         if isExpanded {
             ForEach(node.children) { child in

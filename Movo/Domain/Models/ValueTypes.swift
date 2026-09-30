@@ -386,7 +386,7 @@ public enum EntityType: String, Codable, Sendable, CaseIterable, Identifiable {
 public enum OperationKind: String, Codable, Sendable, CaseIterable, Identifiable {
     case createPlan, updatePlan, pausePlan, resumePlan, deletePlan, restoreEntity
     case createStage, updateStage, createMetric, updateMetric
-    case createTask, updateTask, scheduleTask, setDeadline, completeTask, reopenTask, cancelTask
+    case createTask, updateTask, deleteTask, scheduleTask, setDeadline, completeTask, reopenTask, cancelTask
     case completeOccurrence, skipOccurrence
     case logActivity, correctActivity
     case recordMeasurement, correctMeasurement
@@ -404,7 +404,7 @@ public enum OperationKind: String, Codable, Sendable, CaseIterable, Identifiable
     /// 4.4 撤销算法：不可撤销集
     public var isUndoable: Bool {
         switch self {
-        case .deletePlan, .resolveConflict, .restoreEntity, .undoBatch: false
+        case .deletePlan, .deleteTask, .resolveConflict, .restoreEntity, .undoBatch: false
         default: true
         }
     }
@@ -423,6 +423,7 @@ public enum OperationKind: String, Codable, Sendable, CaseIterable, Identifiable
         case .updateMetric: "修改指标"
         case .createTask: "新增任务"
         case .updateTask: "修改任务"
+        case .deleteTask: "删除待办及子任务"
         case .scheduleTask: "安排日期"
         case .setDeadline: "设置硬截止"
         case .completeTask: "完成任务"

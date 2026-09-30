@@ -16,7 +16,7 @@ public enum AppSection: String, Hashable, Sendable, CaseIterable, Identifiable {
 
     public var title: String {
         switch self {
-        case .today: "今日"
+        case .today: "待办"
         case .inbox: "收件箱"
         case .plans: "计划"
         case .review: "回顾"
@@ -26,7 +26,7 @@ public enum AppSection: String, Hashable, Sendable, CaseIterable, Identifiable {
 
     public var systemImage: String {
         switch self {
-        case .today: "sun.max"
+        case .today: "checklist"
         case .inbox: "tray"
         case .plans: "square.stack.3d.up"
         case .review: "chart.bar.doc.horizontal"
@@ -34,9 +34,9 @@ public enum AppSection: String, Hashable, Sendable, CaseIterable, Identifiable {
         }
     }
 
-    /// Mac 侧边导航顺序：今日 / 收件箱 / 计划 / 回顾 / 搜索（设置放底部）
+    /// Mac 侧边导航顺序：待办 / 收件箱 / 计划 / 回顾 / 搜索（设置放底部）
     public static let sidebarOrder: [AppSection] = [.today, .inbox, .plans, .review, .search]
-    /// iPhone 底部标签：今日 / 计划 / 回顾（收件箱与搜索从顶部进入）
+    /// iPhone 底部标签：待办 / 计划 / 回顾（收件箱与搜索从顶部进入）
     public static let phoneOrder: [AppSection] = [.today, .plans, .review]
 }
 
@@ -57,6 +57,8 @@ public enum Route: Hashable, Identifiable, Sendable {
 
     // 任务
     case taskDetail(UUID)
+    case newTask(planID: UUID?, parentID: UUID?, scheduledToday: Bool)
+    case moveTask(UUID)
 
     // 结果与记录
     case metricHistory(metricID: UUID)
@@ -92,6 +94,8 @@ public enum Route: Hashable, Identifiable, Sendable {
         case .recurrenceEditor(let id): "recurrence-\(id.uuidString)"
         case .recurrencePreview(let id): "recurrence-preview-\(id.uuidString)"
         case .taskDetail(let id): "task-\(id.uuidString)"
+        case .newTask: "new-task"
+        case .moveTask(let id): "move-task-\(id.uuidString)"
         case .metricHistory(let id): "metric-history-\(id.uuidString)"
         case .logMeasurement(let id): "log-measurement-\(id.uuidString)"
         case .bulkPreview(let title, let ids): "bulk-\(title.hashValue)-\(ids.count)"
@@ -112,7 +116,7 @@ public enum Route: Hashable, Identifiable, Sendable {
     /// 画板名（便于对照设计稿与截图验收）
     public var artboardName: String {
         switch self {
-        case .section(.today): "D01 / M01 今日"
+        case .section(.today): "D01 / M01 待办"
         case .section(.inbox): "D05 / M05 收件箱"
         case .section(.plans): "D06 / M07 我的计划"
         case .section(.review): "D08 / M10 回顾"
@@ -126,6 +130,8 @@ public enum Route: Hashable, Identifiable, Sendable {
         case .recurrenceEditor: "M09-Frequency 编辑重复频率"
         case .recurrencePreview: "M09-FrequencyPreview 频率影响预览"
         case .taskDetail: "D07 / M12 任务详情"
+        case .newTask: "D04-Manual / M04-Manual 新建待办"
+        case .moveTask: "移动待办"
         case .metricHistory: "M09-ResultHistory 结果历史"
         case .logMeasurement: "M09-Result 补记结果"
         case .bulkPreview: "D05-BulkPreview 批量影响预览"

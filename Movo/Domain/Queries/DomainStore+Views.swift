@@ -84,12 +84,13 @@ public extension DomainStore {
 
     func planDetail(_ planID: UUID) async -> PlanDetail? {
         guard let plan = await repository.plan(planID) else { return nil }
-        let tasks = await repository.tasks(planID: planID)
+        let deleted = Set(await repository.tombstones(activeOnly: true).map(\.entityId))
+        let tasks = await repository.tasks(planID: planID).filter { !deleted.contains($0.id) }
         let stages = (await repository.stages(planID: planID)).sorted { $0.sortIndex < $1.sortIndex }
         let metrics = await repository.metrics(planID: planID)
         let measurements = await repository.measurements(planID: planID)
         let rules = (await repository.rules()).filter { r in tasks.contains { $0.id == r.taskId } }
-        let occurrences = await repository.occurrences(planID: planID)
+        let occurrences = await repository.occurrences(planID: planID).filter { !deleted.contains($0.id) }
         let week = DateOnlyRange.week(containing: today)
 
         let progress = ProgressPolicy.progressFor(
@@ -133,7 +134,10 @@ public extension DomainStore {
         if let stageID = task.stageId { stage = await repository.stage(stageID) }
         var parent: Task?
         if let parentID = task.parentId { parent = await repository.task(parentID) }
-        let children = await repository.children(of: taskID)
+        let deletedChildren = Set(await repository.tombstones(activeOnly: true).map(\.entityId))
+        let children = TaskHierarchy.ordered(await repository.children(of: taskID).filter {
+            !deletedChildren.contains($0.id) && $0.status != .cancelled
+        })
         var siblings: [Task] = []
         if let planID = task.planId { siblings = await repository.tasks(planID: planID) }
         let tombstoned = Set(await repository.tombstones(activeOnly: true).map(\.entityId))

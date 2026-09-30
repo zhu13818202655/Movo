@@ -16,6 +16,15 @@ public struct TaskDetailScreen: View {
     let taskID: UUID
 
     @State private var detail: TaskDetail?
+    @State private var childNodes: [TodoNode] = []
+    @State private var childProgress = ""
+    @State private var dateEditor = false
+    @State private var hasSchedule = false
+    @State private var scheduleDate = Date()
+    @State private var hasDeadline = false
+    @State private var deadlineDate = Date()
+    @State private var priority = TaskPriority.normal
+    @State private var formError: String?
     @State private var showHistory = false
     @State private var showRecords = true
     @State private var titleDraft = ""
@@ -32,26 +41,61 @@ public struct TaskDetailScreen: View {
             }
         }
         .movoPageBackground()
-        .task { await reload() }
+        .task(id: env.store.dataVersion) { await reload() }
+        .sheet(isPresented: $dateEditor) {
+            VStack(alignment: .leading, spacing: MovoSpace.m) {
+                Text("安排与优先级").font(MovoFont.title2)
+                MovoDateField("安排日期", isOn: $hasSchedule, date: $scheduleDate,
+                              timeZone: env.store.currentTimeZone)
+                Toggle("硬截止", isOn: $hasDeadline)
+                if hasDeadline {
+                    DatePicker("截止时刻", selection: $deadlineDate)
+                        .environment(\.timeZone, env.store.currentTimeZone)
+                }
+                Picker("优先级", selection: $priority) {
+                    ForEach(TaskPriority.allCases) { value in Text(value.displayName).tag(value) }
+                }
+                if let formError { Text(formError).foregroundStyle(.red) }
+                HStack {
+                    MovoButton("保存") { _Concurrency.Task { await saveArrangement() } }
+                    MovoButton("取消", kind: .quiet) { dateEditor = false }
+                }
+            }.padding(MovoSpace.m)
+            #if os(macOS)
+            .frame(minWidth: 420)
+            #endif
+        }
     }
 
     @ViewBuilder
     private func content(_ detail: TaskDetail) -> some View {
         ScreenScroll {
-            ScreenChrome("任务详情", subtitle: detail.task.status.displayName) {
+            ScreenChrome("任务详情", subtitle: detail.children.isEmpty ? detail.task.status.displayName : childProgress) {
                 Menu {
+                    if detail.children.isEmpty {
                     Button(detail.task.status == .done ? "重新打开" : "标记完成") {
                         _Concurrency.Task { await toggleDone(detail) }
+                    }
+                    }
+                    if !detail.task.isTemplate {
+                        Button("添加子任务") {
+                            router.present(.newTask(planID: detail.task.planId, parentID: taskID, scheduledToday: false))
+                        }
+                        Button("移动到…") { router.present(.moveTask(taskID)) }
                     }
                     Button("改到明天") { _Concurrency.Task { await reschedule(detail, days: 1) } }
                     Button("安排到今天") { _Concurrency.Task { await schedule(detail, day: env.store.today) } }
                     Button("清除安排日期") { _Concurrency.Task { await clearSchedule(detail) } }
-                    Button("设置/修改频率") { router.present(.recurrenceEditor(taskID: taskID)) }
+                    if detail.children.isEmpty && detail.parent == nil {
+                        Button("设置/修改频率") { router.present(.recurrenceEditor(taskID: taskID)) }
+                    }
                     if detail.task.hardDeadline != nil {
                         Button("清除硬截止") { _Concurrency.Task { await clearDeadline(detail) } }
                     }
                     Divider()
-                    Button("取消这项") { _Concurrency.Task { await cancel(detail) } }
+                    if detail.children.isEmpty {
+                        Button("取消这项") { _Concurrency.Task { await cancel(detail) } }
+                    }
                 } label: {
                     Image(systemName: "ellipsis.circle")
                         .font(.system(size: 18)).foregroundStyle(MovoColor.muted)
@@ -61,6 +105,11 @@ public struct TaskDetailScreen: View {
                 .frame(width: MovoSpace.minTouch)
             }
 
+            if let parent = detail.parent {
+                MovoButton("上级：\(parent.title)", systemImage: "arrow.turn.up.left", kind: .quiet) {
+                    router.push(.taskDetail(parent.id))
+                }
+            }
             // 标题
             SectionBlock("") {
                 VStack(alignment: .leading, spacing: MovoSpace.s) {
@@ -75,7 +124,11 @@ public struct TaskDetailScreen: View {
                             .font(MovoFont.title2).foregroundStyle(MovoColor.ink)
                             .fixedSize(horizontal: false, vertical: true)
                         HStack(spacing: MovoSpace.s) {
-                            StatusTag(taskStatus: detail.task.status)
+                            if detail.children.isEmpty {
+                                StatusTag(taskStatus: detail.task.status)
+                            } else {
+                                MovoTag(childProgress)
+                            }
                             if !detail.dependency.isReady {
                                 MovoTag(detail.dependency.badgeText, systemImage: "arrow.triangle.branch")
                             }
@@ -120,18 +173,12 @@ public struct TaskDetailScreen: View {
                 }
             }
 
-            if !detail.children.isEmpty {
-                SectionBlock("子任务", trailing: "\(detail.children.count) 项") {
-                    VStack(spacing: 0) {
-                        ForEach(detail.children) { child in
-                            TaskRow(config: TaskRowConfig(
-                                title: child.title, status: child.status,
-                                isCompletedToday: child.status == .done),
-                                showsCheckbox: false,
-                                onTap: { router.push(.taskDetail(child.id)) })
-                                .padding(.horizontal, MovoSpace.s)
-                        }
-                    }
+            if !detail.task.isTemplate {
+                SectionBlock("子任务", trailing: childProgress) {
+                    TaskOutline(nodes: childNodes)
+                    MovoButton("添加子任务", systemImage: "plus", kind: .quiet) {
+                        router.present(.newTask(planID: detail.task.planId, parentID: taskID, scheduledToday: false))
+                    }.padding(MovoSpace.s)
                 }
             }
 
@@ -214,9 +261,11 @@ public struct TaskDetailScreen: View {
             }
 
             HStack(spacing: MovoSpace.s) {
+                if detail.children.isEmpty {
                 MovoButton(detail.task.status == .done ? "重新打开" : "标记完成",
                            systemImage: detail.task.status == .done ? "arrow.counterclockwise" : "checkmark",
                            kind: .primary) { _Concurrency.Task { await toggleDone(detail) } }
+                }
                 MovoButton("记录一次行动", kind: .secondary) { _Concurrency.Task { await logActivity(detail) } }
                 Spacer(minLength: 0)
             }
@@ -243,6 +292,11 @@ public struct TaskDetailScreen: View {
 
     private func reload() async {
         detail = await env.store.taskDetail(taskID)
+        childNodes = await env.store.todos(includeCompleted: true, parentID: taskID)
+        let deleted = Set(await env.store.repository.tombstones(activeOnly: true).map(\.entityId))
+        let tasks = await env.store.repository.allTasks().filter { !deleted.contains($0.id) }
+        let progress = ProgressPolicy.groupRollup(parentID: taskID, tasks: tasks)
+        childProgress = "已完成 \(progress.done)/\(progress.total)"
     }
 
     private func toggleDone(_ detail: TaskDetail) async {
@@ -300,23 +354,33 @@ public struct TaskDetailScreen: View {
         await reload()
     }
 
-    private func editSchedule(_ detail: TaskDetail) async {
-        // 次日 / 今天 / 下周一的轻量选择
-        await schedule(detail, day: env.store.today.adding(days: 1))
+    private func editSchedule(_ detail: TaskDetail) async { openArrangement(detail) }
+
+    private func editDeadline(_ detail: TaskDetail) async { openArrangement(detail) }
+
+    private func openArrangement(_ detail: TaskDetail) {
+        hasSchedule = detail.task.scheduledDate != nil
+        scheduleDate = detail.task.scheduledDate?.resolved(in: env.store.currentTimeZone) ?? env.store.now
+        hasDeadline = detail.task.hardDeadline != nil
+        deadlineDate = detail.task.hardDeadline?.epoch ?? env.store.now
+        priority = detail.task.priority ?? .normal
+        formError = nil
+        dateEditor = true
     }
 
-    private func editDeadline(_ detail: TaskDetail) async {
-        var comps = DateComponents()
-        comps.year = env.store.today.y; comps.month = env.store.today.m
-        comps.day = env.store.today.d; comps.hour = 18; comps.minute = 0
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = env.store.currentTimeZone
-        let date = cal.date(from: comps) ?? env.store.now
-        _ = try? await env.store.execute(SetDeadline(taskID: taskID,
-                                                 deadline: DateTimeTZ(date, in: env.store.currentTimeZone),
-                                                 baseRevision: detail.task.revision,
-                                                 reason: "手动设置"))
-        await reload()
+    private func saveArrangement() async {
+        guard let detail else { return }
+        do {
+            let patch = TaskPatch(priority: priority,
+                                  scheduledDate: hasSchedule ? DateOnly(from: scheduleDate, in: env.store.currentTimeZone) : nil,
+                                  clearScheduledDate: !hasSchedule)
+            let update = UpdateTask(taskID: taskID, patch: patch, baseRevision: detail.task.revision)
+            let deadline = SetDeadline(taskID: taskID,
+                                       deadline: hasDeadline ? DateTimeTZ(deadlineDate, in: env.store.currentTimeZone) : nil)
+            _ = try await env.store.executeBatch(BatchInput(commands: [update, deadline], summary: "已更新安排与优先级"))
+            env.lastBatchNotice = env.store.lastNotification
+            dateEditor = false
+        } catch { formError = error.localizedDescription }
     }
 
     private func clearDeadline(_ detail: TaskDetail) async {
