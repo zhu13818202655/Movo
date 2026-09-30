@@ -94,16 +94,25 @@ public extension AppEnvironment {
             plans: plans, stagesByPlan: stagesByPlan, metricsByPlan: metricsByPlan,
             tasksByPlan: tasksByPlan, occurrencesByTask: occurrencesByTask)
 
-        let hasKey = hasKey(for: vendor)
+        let target = vendor ?? self.vendor
         var preparation: ProposalPreparation
 
-        if hasKey {
-            let service = makeProposalService(vendor: vendor, model: model)
-            preparation = await service.prepare(request)
+        if isConfigured(for: target) {
+            do {
+                let service = try makeProposalService(vendor: vendor, model: model)
+                preparation = await service.prepare(request)
+            } catch let error as MovoError {
+                // 配置在提交后被改坏（例如自定义厂商的 Base URL 被清空）：降级本地整理
+                preparation = localOnlyPreparation(request)
+                preparation.error = error
+            } catch {
+                preparation = localOnlyPreparation(request)
+                preparation.error = .aiFailed(stage: .unknown, cause: "provider")
+            }
         } else {
-            // 无 Key：本地分流结果照常保留，整理稍后重试（7.3）
+            // 无 Key / 自定义厂商未填完：本地分流结果照常保留，整理稍后重试（7.3）
             preparation = localOnlyPreparation(request)
-            preparation.error = .noKey(vendor: vendor ?? self.vendor)
+            preparation.error = configurationError(for: target)
         }
 
         lastPreparation = preparation

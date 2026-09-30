@@ -4,7 +4,7 @@
 //
 //  12.1 Adapter AT：以"录制回放"夹具覆盖 8.3/8.4 适配器路径。
 //  覆盖：成功、部分成功、401、429、5xx、超时、无法解析（malformed schema）、
-//  未知字段容错、Claude tool_use 输入块、无 Key。
+//  未知字段容错、JSONValue 解码路径、无 Key、内置/自定义厂商解析。
 //
 
 import Foundation
@@ -17,12 +17,19 @@ final class MockURLProtocol: URLProtocol {
     /// 回放响应：返回 (statusCode, body)，或抛出（模拟超时/断网）。
     nonisolated(unsafe) static var responder: (@Sendable () throws -> (Int, Data))?
     nonisolated(unsafe) static var requestCount = 0
+    /// 最近一次收到的请求（用于断言端点与鉴权头）
+    nonisolated(unsafe) static var lastRequest: URLRequest?
+    /// 最近一次收到的请求体。URLSession 会把 `httpBody` 转成流交给 URLProtocol，
+    /// 所以必须在 `startLoading()` 里读，之后 `request.httpBody` 已是 nil。
+    nonisolated(unsafe) static var lastRequestBody: Data?
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
         MockURLProtocol.requestCount += 1
+        MockURLProtocol.lastRequest = request
+        MockURLProtocol.lastRequestBody = request.httpBody ?? Self.read(request.httpBodyStream)
         guard let responder = MockURLProtocol.responder else {
             client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
             return
@@ -41,6 +48,20 @@ final class MockURLProtocol: URLProtocol {
     }
 
     override func stopLoading() {}
+
+    private static func read(_ stream: InputStream?) -> Data? {
+        guard let stream else { return nil }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while stream.hasBytesAvailable {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            if count <= 0 { break }
+            data.append(buffer, count: count)
+        }
+        return data.isEmpty ? nil : data
+    }
 }
 
 final class AdapterTests: XCTestCase {
@@ -49,6 +70,8 @@ final class AdapterTests: XCTestCase {
         super.setUp()
         MockURLProtocol.responder = nil
         MockURLProtocol.requestCount = 0
+        MockURLProtocol.lastRequest = nil
+        MockURLProtocol.lastRequestBody = nil
     }
 
     // MARK: - 夹具
@@ -144,6 +167,23 @@ final class AdapterTests: XCTestCase {
                     backoffSeconds: Array(repeating: 0, count: max(1, retryCount)))
     }
 
+    /// 以内置 DeepSeek（OpenAI 兼容）构造适配器
+    private func makeDeepSeekAdapter(keyStore: any AIKeyStore = InMemoryAIKeyStore(),
+                                     transport: AITransport? = nil) throws -> OpenAICompatibleAdapter {
+        let resolved = try AIProviderResolver.resolve(vendor: .deepseek, catalog: .fallback)
+        return OpenAICompatibleAdapter(resolved: resolved, keyStore: keyStore, transport: transport)
+    }
+
+    /// 以自定义厂商（OpenAI 兼容）构造适配器
+    private func makeCustomAdapter(keyStore: any AIKeyStore,
+                                   baseURL: String,
+                                   model: String) throws -> OpenAICompatibleAdapter {
+        let resolved = try AIProviderResolver.resolve(
+            vendor: .custom, catalog: .fallback,
+            custom: CustomProviderConfig(baseURL: baseURL, modelID: model))
+        return OpenAICompatibleAdapter(resolved: resolved, keyStore: keyStore, transport: makeTransport())
+    }
+
     private static func request() -> URLRequest {
         var request = URLRequest(url: URL(string: "https://api.example.com/v1/probe")!)
         request.httpMethod = "POST"
@@ -217,7 +257,7 @@ final class AdapterTests: XCTestCase {
         XCTAssertEqual(proposal.items.first?.action, .needsClarification)
     }
 
-    func testDecodeFromClaudeToolInputJSONValue() throws {
+    func testDecodeFromJSONValue() throws {
         let value: JSONValue = .object([
             "schema_version": .int(1),
             "items": .array([
@@ -318,14 +358,132 @@ final class AdapterTests: XCTestCase {
         }
     }
 
+    // MARK: - 8.6 失败分类：自建端点必须能诊断出原因
+    //
+    // 背景：自定义厂商指向用户自建的 OpenAI 兼容服务时，明文 HTTP 被系统安全策略
+    // 拦下、证书不受信、主机名解析失败都会表现为「连不上」。若统一退化成
+    // 「网络不可用」，用户无从判断该改地址、换协议还是换证书。
+
+    /// 明文 HTTP 被 ATS 拦下：要能单独识别，且不做无意义的重试
+    func testTransportMapsATSBlockToDiagnosableCause() async {
+        MockURLProtocol.responder = { throw URLError(.appTransportSecurityRequiresSecureConnection) }
+        let transport = makeTransport(retryCount: 3)
+
+        do {
+            _ = try await transport.send(Self.request())
+            XCTFail("应抛出错误")
+        } catch let error as MovoError {
+            XCTAssertEqual(error, .aiFailed(stage: .network, cause: AIFailureCause.atsPlainHTTP))
+            XCTAssertFalse(error.isRetryable, "地址与协议不对是确定性失败，重试只是白等")
+            XCTAssertEqual(error.diagnosticDetail?.contains("明文 HTTP"), true)
+        } catch {
+            XCTFail("错误类型不符：\(error)")
+        }
+        XCTAssertEqual(MockURLProtocol.requestCount, 1, "确定性失败不自动重试")
+    }
+
+    func testTransportMapsTLSCertificateFailureToDiagnosableCause() async {
+        MockURLProtocol.responder = { throw URLError(.serverCertificateUntrusted) }
+        let transport = makeTransport(retryCount: 2)
+
+        do {
+            _ = try await transport.send(Self.request())
+            XCTFail("应抛出错误")
+        } catch let error as MovoError {
+            XCTAssertEqual(error, .aiFailed(stage: .network, cause: AIFailureCause.tlsUntrusted))
+            XCTAssertFalse(error.isRetryable)
+            XCTAssertEqual(error.diagnosticDetail?.contains("证书"), true)
+        } catch {
+            XCTFail("错误类型不符：\(error)")
+        }
+        XCTAssertEqual(MockURLProtocol.requestCount, 1)
+    }
+
+    func testTransportMapsDNSFailureToDiagnosableCause() async {
+        MockURLProtocol.responder = { throw URLError(.cannotFindHost) }
+        let transport = makeTransport(retryCount: 2)
+
+        do {
+            _ = try await transport.send(Self.request())
+            XCTFail("应抛出错误")
+        } catch let error as MovoError {
+            XCTAssertEqual(error, .aiFailed(stage: .network, cause: AIFailureCause.dnsFailure))
+            XCTAssertFalse(error.isRetryable)
+        } catch {
+            XCTFail("错误类型不符：\(error)")
+        }
+        XCTAssertEqual(MockURLProtocol.requestCount, 1)
+    }
+
+    /// 连接被拒仍按网络抖动处理（服务可能正在重启），保留自动重试
+    func testTransportKeepsConnectionRefusedRetryable() async {
+        MockURLProtocol.responder = { throw URLError(.cannotConnectToHost) }
+        let transport = makeTransport(retryCount: 1)
+
+        do {
+            _ = try await transport.send(Self.request())
+            XCTFail("应抛出错误")
+        } catch let error as MovoError {
+            XCTAssertEqual(error, .aiFailed(stage: .network, cause: AIFailureCause.connectionRefused))
+            XCTAssertTrue(error.isRetryable)
+        } catch {
+            XCTFail("错误类型不符：\(error)")
+        }
+        XCTAssertEqual(MockURLProtocol.requestCount, 2)
+    }
+
+    /// 其余 4xx 单独成阶段：否则会渲染成「未知错误」，看不出是 Base URL 写错
+    func testTransportMaps404ToInvalidRequestWithoutRetry() async {
+        MockURLProtocol.responder = { (404, Data()) }
+        let transport = makeTransport(retryCount: 3)
+
+        do {
+            _ = try await transport.send(Self.request())
+            XCTFail("应抛出错误")
+        } catch let error as MovoError {
+            XCTAssertEqual(error, .aiFailed(stage: .invalidRequest, cause: "http_404"))
+            XCTAssertFalse(error.isRetryable)
+            XCTAssertEqual(error.diagnosticDetail?.contains("Base URL"), true)
+            XCTAssertEqual(error.recoveryActions, [.openSettings(section: .ai), .editText],
+                           "端点不对要引导改设置，重试没有意义")
+        } catch {
+            XCTFail("错误类型不符：\(error)")
+        }
+        XCTAssertEqual(MockURLProtocol.requestCount, 1)
+    }
+
+    /// 端到端：自定义厂商指向局域网明文地址时，「测试连接」要给出可执行的失败原因
+    func testCustomAdapterTestConnectionSurfacesDiagnosableFailure() async throws {
+        MockURLProtocol.responder = { throw URLError(.appTransportSecurityRequiresSecureConnection) }
+        let adapter = try makeCustomAdapter(
+            keyStore: InMemoryAIKeyStore(seed: [.custom: "local-token-12345678"]),
+            baseURL: "http://192.168.1.9:8000/v1",
+            model: "qwen3-32b")
+
+        do {
+            try await adapter.testConnection()
+            XCTFail("应抛出错误")
+        } catch let error as MovoError {
+            XCTAssertEqual(error.diagnosticDetail?.contains("明文 HTTP"), true)
+        }
+
+        // 探测请求是最小 POST；不带 response_format，自建服务未实现时可读的失败才会出现
+        let request = try XCTUnwrap(MockURLProtocol.lastRequest)
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.url?.absoluteString, "http://192.168.1.9:8000/v1/chat/completions")
+        let body = String(decoding: try XCTUnwrap(MockURLProtocol.lastRequestBody), as: UTF8.self)
+        XCTAssertFalse(body.contains("response_format"))
+        XCTAssertTrue(body.contains("max_tokens"))
+    }
+
     // MARK: - 8.3 端到端：适配器把聊天信封解码为 AIProposal
 
-    func testOpenAIAdapterDecodesChatEnvelope() async throws {
+    func testDeepSeekAdapterDecodesChatEnvelope() async throws {
         let envelope = try chatEnvelope(content: Self.singleCreateTaskJSON)
         MockURLProtocol.responder = { (200, envelope) }
 
-        let adapter = OpenAIAdapter(
-            keyStore: InMemoryAIKeyStore(seed: [.openai: "sk-test-0000000000000000"]),
+        let adapter = try makeDeepSeekAdapter(
+            keyStore: InMemoryAIKeyStore(seed: [.deepseek: "sk-test-0000000000000000"]),
             transport: makeTransport())
 
         let proposal = try await adapter.proposeOperations(Self.input)
@@ -333,45 +491,128 @@ final class AdapterTests: XCTestCase {
         XCTAssertEqual(proposal.items.count, 1)
         XCTAssertEqual(proposal.items.first?.action, .createTask)
         XCTAssertEqual(proposal.items.first?.task?.title, "交周报")
-        XCTAssertEqual(proposal.provider, "openai")
+        XCTAssertEqual(proposal.provider, "deepseek")
         XCTAssertEqual(proposal.promptTokens, 120)
         XCTAssertEqual(proposal.completionTokens, 48)
+
+        // 端点来自内置目录，鉴权头为 Bearer
+        let request = try XCTUnwrap(MockURLProtocol.lastRequest)
+        XCTAssertEqual(request.url?.absoluteString,
+                       ModelCatalog.fallback.entry(for: .deepseek)?.endpoint)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer sk-test-0000000000000000")
     }
 
-    func testOpenAIAdapterFailsOnUnparsableEnvelope() async throws {
+    func testCustomAdapterUsesUserEndpointAndModel() async throws {
+        let envelope = try chatEnvelope(content: Self.singleCreateTaskJSON)
+        MockURLProtocol.responder = { (200, envelope) }
+
+        let adapter = try makeCustomAdapter(
+            keyStore: InMemoryAIKeyStore(seed: [.custom: "local-token-12345678"]),
+            baseURL: "https://llm.internal.example/v1/",
+            model: "qwen3-32b")
+
+        XCTAssertEqual(adapter.id, .custom)
+        XCTAssertEqual(adapter.currentModel, "qwen3-32b")
+
+        let proposal = try await adapter.proposeOperations(Self.input)
+        XCTAssertEqual(proposal.provider, "custom")
+        XCTAssertEqual(proposal.model, "qwen3-32b")
+
+        let request = try XCTUnwrap(MockURLProtocol.lastRequest)
+        XCTAssertEqual(request.url?.absoluteString,
+                       "https://llm.internal.example/v1/chat/completions",
+                       "尾斜杠应被归一化，路径拼接不多不少")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer local-token-12345678")
+    }
+
+    func testAdapterFailsOnUnparsableEnvelope() async throws {
         MockURLProtocol.responder = { (200, Data("not-a-chat-envelope".utf8)) }
-        let adapter = OpenAIAdapter(
-            keyStore: InMemoryAIKeyStore(seed: [.openai: "sk-test-0000000000000000"]),
+        let adapter = try makeDeepSeekAdapter(
+            keyStore: InMemoryAIKeyStore(seed: [.deepseek: "sk-test-0000000000000000"]),
             transport: makeTransport())
 
         do {
             _ = try await adapter.proposeOperations(Self.input)
             XCTFail("无法解析的信封必须抛错")
         } catch let error as MovoError {
-            XCTAssertEqual(error, .aiFailed(stage: .parse, cause: "openai_envelope"))
+            XCTAssertEqual(error, .aiFailed(stage: .parse, cause: "chat_envelope"))
         } catch {
             XCTFail("错误类型不符：\(error)")
         }
     }
 
-    // MARK: - 8.1 无 Key / 模型目录
+    // MARK: - 8.1 无 Key / 模型目录 / 厂商解析
 
-    func testAdapterWithoutKeyThrowsNoKey() async {
-        let adapter = OpenAIAdapter(keyStore: InMemoryAIKeyStore())
+    func testAdapterWithoutKeyThrowsNoKey() async throws {
+        let adapter = try makeDeepSeekAdapter()
         do {
             _ = try await adapter.proposeOperations(Self.input)
             XCTFail("缺少 Key 应抛错")
         } catch let error as MovoError {
-            XCTAssertEqual(error, .noKey(vendor: .openai))
+            XCTAssertEqual(error, .noKey(vendor: .deepseek))
         } catch {
             XCTFail("错误类型不符：\(error)")
         }
     }
 
-    func testAdapterExposesCatalogModels() {
-        let adapter = OpenAIAdapter(keyStore: InMemoryAIKeyStore())
-        XCTAssertEqual(adapter.id, .openai)
+    func testAdapterExposesCatalogModels() throws {
+        let adapter = try makeDeepSeekAdapter()
+        XCTAssertEqual(adapter.id, .deepseek)
         XCTAssertFalse(adapter.availableModels().isEmpty)
         XCTAssertFalse(adapter.currentModel.isEmpty)
+    }
+
+    func testCatalogOnlyContainsBuiltinVendors() {
+        XCTAssertNotNil(ModelCatalog.fallback.entry(for: .deepseek))
+        XCTAssertNil(ModelCatalog.fallback.entry(for: .custom), "自定义厂商不进目录")
+        XCTAssertFalse(ModelCatalog.fallback.entry(for: .deepseek)?.models.isEmpty ?? true)
+    }
+
+    func testResolverFallsBackToDefaultModelForUnknownSelection() throws {
+        let resolved = try AIProviderResolver.resolve(vendor: .deepseek, catalog: .fallback,
+                                                      model: "not-in-catalog")
+        XCTAssertEqual(resolved.model, "deepseek-v4-pro")
+    }
+
+    func testResolverRejectsIncompleteCustomProvider() {
+        XCTAssertThrowsError(try AIProviderResolver.resolve(vendor: .custom, catalog: .fallback,
+                                                           custom: .empty, model: nil)) { error in
+            XCTAssertEqual(error as? MovoError, .providerNotConfigured(vendor: .custom))
+        }
+    }
+
+    func testResolverBuildsCustomProvider() throws {
+        let resolved = try AIProviderResolver.resolve(
+            vendor: .custom, catalog: .fallback,
+            custom: CustomProviderConfig(baseURL: "https://llm.internal/v1", modelID: "qwen3-32b"))
+        XCTAssertEqual(resolved.vendor, .custom)
+        XCTAssertEqual(resolved.displayName, "自定义")
+        XCTAssertEqual(resolved.model, "qwen3-32b")
+        XCTAssertEqual(resolved.chatCompletionsURL, "https://llm.internal/v1/chat/completions")
+        XCTAssertEqual(resolved.models.map(\.id), ["qwen3-32b"])
+    }
+
+    // MARK: - 自定义厂商 Base URL 归一化
+
+    func testCustomProviderNormalizesBaseURL() {
+        // 尾斜杠
+        XCTAssertEqual(CustomProviderConfig(baseURL: "https://a.example/v1/", modelID: "m")
+            .chatCompletionsURL(), "https://a.example/v1/chat/completions")
+        // 首尾空白
+        XCTAssertEqual(CustomProviderConfig(baseURL: "  https://a.example/v1  ", modelID: "m")
+            .chatCompletionsURL(), "https://a.example/v1/chat/completions")
+        // 用户直接粘了完整端点：不重复拼接
+        XCTAssertEqual(CustomProviderConfig(baseURL: "https://a.example/v1/chat/completions", modelID: "m")
+            .chatCompletionsURL(), "https://a.example/v1/chat/completions")
+        // 缺 scheme
+        XCTAssertNil(CustomProviderConfig(baseURL: "api.example/v1", modelID: "m").chatCompletionsURL())
+        XCTAssertFalse(CustomProviderConfig(baseURL: "api.example/v1", modelID: "m").isComplete)
+    }
+
+    func testCustomProviderRequiresBothFields() {
+        XCTAssertFalse(CustomProviderConfig(baseURL: "https://a.example/v1", modelID: " ")
+            .isComplete, "模型 ID 为空白视为未填")
+        XCTAssertFalse(CustomProviderConfig(baseURL: "", modelID: "m").isComplete)
+        XCTAssertTrue(CustomProviderConfig(baseURL: "https://a.example/v1", modelID: "m").isComplete)
     }
 }

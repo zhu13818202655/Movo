@@ -20,12 +20,12 @@ import Security
 /// Key 的展示与格式判定。**永不返回可用 Key 的正文**。
 public enum AIKeyFormat {
 
-    /// 已知厂商前缀。长前缀优先，避免 `sk-ant-…` 被 `sk-` 截断。
-    static let vendorPrefixes = ["sk-ant-", "sk-"]
+    /// 已知内置厂商前缀。长前缀优先，避免被更短的前缀截断。
+    static let vendorPrefixes = ["sk-"]
 
-    /// 脱敏：保留厂商前缀与末 4 位，中间一律省略。
+    /// 脱敏：保留已知厂商前缀与末 4 位，中间一律省略。
     /// `sk-proj-abcdefghijklmnop1234` → `sk-…1234`
-    /// `sk-ant-api03-abcdefghijklmnop` → `sk-ant-…mnop`
+    /// `local-token-abcdefghijklmnop` → `…mnop`
     public static func mask(_ key: String) -> String {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
@@ -35,14 +35,16 @@ public enum AIKeyFormat {
     }
 
     /// 本地格式预检（不联网）：判断 Key 是否形如该厂商的 Key。
+    /// 仅作参考提示，不阻止保存——自定义厂商的 Key 格式由用户自行决定。
     public static func looksValid(_ key: String, vendor: AIVendor) -> Bool {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= 8 else { return false }
         switch vendor {
-        case .openai:
-            return trimmed.hasPrefix("sk-") && !trimmed.hasPrefix("sk-ant-")
-        case .claude:
-            return trimmed.hasPrefix("sk-ant-")
+        case .deepseek:
+            return trimmed.hasPrefix("sk-")
+        case .custom:
+            // 自建服务的 Key 格式不可预知，只做长度预检。
+            return true
         }
     }
 }

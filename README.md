@@ -2,7 +2,7 @@
 
 Movo 是面向 iPhone 和 Mac 的个人待办与长期目标管理应用：直接创建待办，也可用 AI 整理文字或语音，将事项组织为计划与多级任务，并持续记录行动、结果和回顾。
 
-项目使用 Swift 6、SwiftUI 和 SwiftData，双端共享领域逻辑。AI 由客户端直连用户选择的 OpenAI 或 Claude API，无独立的 Movo AI 后端。
+项目使用 Swift 6、SwiftUI 和 SwiftData，双端共享领域逻辑。AI 由客户端直连用户选择的模型服务：内置厂商目前为 DeepSeek，也可切换到自定义厂商（OpenAI 兼容，自行填写 Base URL、模型 ID 与 Key），无独立的 Movo AI 后端。
 
 ## 功能与当前边界
 
@@ -96,7 +96,9 @@ xcodebuild test \
 
 ### AI
 
-在应用设置中选择厂商和模型，录入 API Key 并测试连接。每台设备分别配置；Key 存入当前设备的 Keychain，不同步到 iCloud，不应进入日志或导出。
+在应用设置中选择厂商和模型，录入 API Key 并测试连接。厂商分两类：**内置厂商**（目前为 DeepSeek）的端点与模型清单随应用提供；**自定义厂商**走 OpenAI 兼容协议，由用户填写 Base URL、模型 ID 与 Key，可指向自建或第三方兼容服务。每台设备分别配置；厂商选择与自定义配置存在本机偏好，Key 存入当前设备的 Keychain，均不同步到 iCloud，不应进入日志或导出。
+
+自定义厂商的 Base URL 由用户自己填，因此既可以是 `https://` 域名，也可以是 `http://` 明文地址或裸 IP，例如 `http://203.0.113.10:21003/v1`、`http://192.168.x.x:8000/v1`（Ollama、vLLM、LM Studio 等）。系统自 iOS 17 / macOS 14 起默认拒绝连接裸 IP，并一贯拒绝明文 HTTP，所以应用通过 `NSAllowsArbitraryLoads` 放开了协议限制；这不会降低 HTTPS 连接的证书校验。代价是明文 HTTP 下 API Key 与整理内容可能被网络路径上的第三方读取，建议尽量改用 HTTPS。除地址与证书问题外，「测试连接」会区分出主机名解析失败、端口不通、模型 ID 不对等具体原因。细节见 [docs/Development.md](docs/Development.md) 的「自定义厂商的网络要求」。
 
 允许云处理的文字和上下文会发送给所选 AI 厂商。健康及敏感内容通过隐私分流和上下文校验限制发送；“密钥保存在本机”并不意味着所有 AI 处理都在本机完成。
 
@@ -113,7 +115,7 @@ xcodebuild test \
 | 文件 | 用途 |
 | --- | --- |
 | `Movo/Config/Defaults.json` | 提醒时间、AI 阈值、超时、录音限制等 |
-| `Movo/Config/ModelsCatalog.json` | 厂商端点和模型清单 |
+| `Movo/Config/ModelsCatalog.json` | 内置厂商的端点和模型清单（自定义厂商不在此登记） |
 | `Movo/Config/HealthKeywords.json` | 健康敏感词表 |
 | `Movo/project.yml` | targets、编译选项、签名与 Info.plist 配置 |
 | `Movo/Resources/*.entitlements` | 平台权限声明 |

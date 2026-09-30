@@ -179,20 +179,21 @@ final class PrivacyTests: XCTestCase {
         let masked = AIKeyFormat.mask(key)
         XCTAssertEqual(masked, "sk-…1234")
         XCTAssertFalse(masked.contains("abcdefghijklmnop"))
-        XCTAssertTrue(AIKeyFormat.looksValid(key, vendor: .openai))
-        XCTAssertFalse(AIKeyFormat.looksValid(key, vendor: .claude))
+        XCTAssertTrue(AIKeyFormat.looksValid(key, vendor: .deepseek))
+        XCTAssertFalse(AIKeyFormat.looksValid("short", vendor: .deepseek), "过短的 Key 一律预检不通过")
     }
 
-    func testClaudeKeyMaskAndValidation() {
-        let key = "sk-ant-api03-abcdefghijklmnop"
-        XCTAssertEqual(AIKeyFormat.mask(key), "sk-ant-…mnop")
-        XCTAssertTrue(AIKeyFormat.looksValid(key, vendor: .claude))
+    func testCustomProviderKeyValidationIsLenient() {
+        // 自建服务的 Key 格式不可预知：只做长度预检，不要求前缀。
+        XCTAssertTrue(AIKeyFormat.looksValid("local-token-12345678", vendor: .custom))
+        XCTAssertFalse(AIKeyFormat.looksValid("abc", vendor: .custom))
+        XCTAssertEqual(AIKeyFormat.mask("local-token-12345678"), "…5678")
     }
 
     func testKeyNeverEntersRequestBodyOrErrorLog() throws {
         let secret = "sk-proj-supersecretvalue0000"
-        let store = InMemoryAIKeyStore(seed: [.openai: secret])
-        XCTAssertEqual(store.key(vendor: .openai), secret, "Key 只应可由 KeyStore 读出")
+        let store = InMemoryAIKeyStore(seed: [.deepseek: secret])
+        XCTAssertEqual(store.key(vendor: .deepseek), secret, "Key 只应可由 KeyStore 读出")
 
         // 请求体不得含 Key
         let input = AIInput(locale: "zh-Hans", timezone: tz.identifier, today: "2026-09-28",

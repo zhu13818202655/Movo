@@ -78,6 +78,41 @@ targets:
         buildPhase: resources
     dependencies:
       - target: MovoKit
+    # ------------------------------------------------------------------ Info.plist
+    # 只有嵌套字典（ATS）这类设置无法用 INFOPLIST_KEY_* 表达，因此这里额外声明一个
+    # 生成式 Info.plist；Xcode 会把下方 settings 里的 INFOPLIST_KEY_* 合并进去。
+    # 该文件由 xcodegen 重新生成，不入库（见 .gitignore）。
+    info:
+      path: Info.plist
+      properties:
+        # ⚠️ NSAllowsArbitraryLoads 与 NSAllowsLocalNetworking **不能同时出现**。
+        # Apple 明确规定：只要 Info.plist 里存在 NSAllowsLocalNetworking /
+        # NSAllowsArbitraryLoadsInWebContent / NSAllowsArbitraryLoadsForMedia 中的
+        # 任意一个，iOS 10+ / macOS 10.12+ 就会**忽略 NSAllowsArbitraryLoads**
+        # 并改用其默认值 NO。再加回 NSAllowsLocalNetworking 等于静默关掉这个例外。
+        #
+        # 为什么必须用 NSAllowsArbitraryLoads：自定义厂商的 Base URL 由用户填写，
+        # 应用事先不知道会是什么地址，无法按域名逐个放行。实际形态覆盖：
+        #   http://203.0.113.10:21003/v1    公网 IP + 明文 HTTP
+        #   http://192.168.x.x:8000/v1      局域网 vLLM / LM Studio
+        #   http://localhost:11434/v1       Ollama
+        # 系统自 iOS 17 / macOS 14 起默认拒绝连接裸 IP（公网与局域网皆然），
+        # 并一贯拒绝明文 HTTP。没有这个例外时，请求在到达用户服务之前就被系统掐断。
+        # 该键关闭的是「协议限制」，不改动 URLSession 的默认服务器信任评估：
+        # HTTPS 连接（如 DeepSeek）仍按原样校验，不会降级。
+        #
+        # 代价：明文 HTTP 在应用内全面放开，API Key 与整理内容可能以明文过网。
+        # 上架 App Store 需在审核时说明理由（Apple 认可的理由之一：
+        # 「必须连接由第三方管理、不支持安全连接的服务器」）。
+        # 若将来只需服务固定域名，应换成更窄的写法：
+        #   NSExceptionDomains:
+        #     "api.example.com":
+        #       NSExceptionAllowsInsecureHTTPLoads: true
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        # 连接局域网内的自建服务需要本地网络访问权限（iOS 14+ / macOS 15+）。
+        # 这是独立于 ATS 的另一套机制，公网 IP 不触发，局域网地址会触发。
+        NSLocalNetworkUsageDescription: "用于连接你自己部署的模型服务；请求只会发往你在设置里填写的地址。"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.louis.movo

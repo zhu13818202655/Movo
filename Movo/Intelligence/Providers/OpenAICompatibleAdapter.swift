@@ -1,10 +1,13 @@
 //
-//  OpenAIAdapter.swift
+//  OpenAICompatibleAdapter.swift
 //  Intelligence/Providers
 //
-//  8.4 结构化输出：Chat Completions + `response_format = {"type":"json_object"}`。
-//  客户端在系统提示里内嵌输出契约，并把 `choices[].message.content` 解析为 `AIProposal`。
-//  同时提供 `AIProposalCoding`（OpenAI / Claude 共用的提案解码器）。
+//  8.3 / 8.4 结构化输出：Chat Completions + `response_format = {"type":"json_object"}`。
+//  内置厂商（DeepSeek）与用户自定义厂商都走 OpenAI 兼容协议，因此共用这一个适配器：
+//  端点由 `ResolvedAIProvider` 提供（内置取目录，自定义取用户配置），Key 按厂商隔离。
+//
+//  客户端在系统提示里内嵌输出契约，并把 `choices[].message.content` 解析为 `AIProposal`；
+//  同时提供 `AIProposalCoding`（提案解码器，与厂商无关）。
 //
 
 import Foundation
@@ -20,7 +23,7 @@ public enum AIProposalCoding {
         return decode(value)
     }
 
-    /// 从已解析的 JSON 值解码提案（Claude tool_use 的 `input` 直接走这条路）。
+    /// 从已解析的 JSON 值解码提案。
     /// 任一 item 的 action 不在枚举内 → 整体解码失败（不得静默通过）。
     public static func decode(_ value: JSONValue) -> AIProposal? {
         guard case .object(let root) = value,
@@ -150,56 +153,59 @@ public enum AIProposalCoding {
     }
 }
 
-// MARK: - OpenAI 适配器
+// MARK: - OpenAI 兼容适配器
 
-public struct OpenAIAdapter: AIProvider {
+/// 覆盖所有 OpenAI 兼容端点（内置 DeepSeek 与用户自定义厂商）。
+/// 只负责「请求构造 + 响应解析」；校验、策略与落地在 Planning / App 层。
+public struct OpenAICompatibleAdapter: AIProvider {
 
-    public let id: AIVendor = .openai
-    public var displayName: String { "OpenAI" }
+    public let id: AIVendor
+    public let displayName: String
     public let currentModel: String
 
+    private let models: [ModelInfo]
+    private let chatCompletionsURL: String
     private let keyStore: any AIKeyStore
-    private let catalog: ModelCatalog
     private let transport: AITransport
 
-    public init(keyStore: any AIKeyStore,
-                catalog: ModelCatalog = .fallback,
+    public init(resolved: ResolvedAIProvider,
+                keyStore: any AIKeyStore,
                 defaults: AppDefaults = .fallback,
-                model: String? = nil,
                 transport: AITransport? = nil) {
+        self.id = resolved.vendor
+        self.displayName = resolved.displayName
+        self.currentModel = resolved.model
+        self.models = resolved.models
+        self.chatCompletionsURL = resolved.chatCompletionsURL
         self.keyStore = keyStore
-        self.catalog = catalog
         self.transport = transport ?? AITransport(defaults: defaults)
-        self.currentModel = model ?? catalog.entry(for: .openai)?.models.first?.id ?? ""
     }
 
-    private var entry: ModelCatalog.VendorEntry? { catalog.entry(for: .openai) }
-
-    public func availableModels() -> [ModelInfo] {
-        (entry?.models ?? []).map(ModelInfo.init(entry:))
-    }
+    public func availableModels() -> [ModelInfo] { models }
 
     // MARK: 8.1 测试连接
 
+    /// 发一条最小 chat 请求：一次性验证 Base URL、Key 与模型 ID 三者是否可用
+    /// （自定义厂商未必实现 `GET /models`，因此不依赖模型列表端点）。
     public func testConnection() async throws {
-        let key = try Self.requireKey(keyStore: keyStore, vendor: .openai)
-        let endpoint = entry?.testEndpoint ?? entry?.endpoint ?? "https://api.openai.com/v1/models"
-        guard let url = URL(string: endpoint) else {
+        let key = try Self.requireKey(keyStore: keyStore, vendor: id)
+        guard let url = URL(string: chatCompletionsURL) else {
             throw MovoError.aiFailed(stage: .unknown, cause: "endpoint_invalid")
         }
         var request = URLRequest(url: url)
-        request.httpMethod = "GET"
+        request.httpMethod = "POST"
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.httpBody = Self.probeBody(model: currentModel)
         _ = try await transport.send(request)
     }
 
     // MARK: 8.3 提议
 
     public func proposeOperations(_ input: AIInput) async throws -> AIProposal {
-        let key = try Self.requireKey(keyStore: keyStore, vendor: .openai)
-        let endpoint = entry?.endpoint ?? "https://api.openai.com/v1/chat/completions"
-        guard let url = URL(string: endpoint) else {
+        let key = try Self.requireKey(keyStore: keyStore, vendor: id)
+        guard let url = URL(string: chatCompletionsURL) else {
             throw MovoError.aiFailed(stage: .unknown, cause: "endpoint_invalid")
         }
 
@@ -230,16 +236,16 @@ public struct OpenAIAdapter: AIProvider {
         }
 
         guard let envelope = try? JSONDecoder().decode(Envelope.self, from: response.data) else {
-            throw MovoError.aiFailed(stage: .parse, cause: "openai_envelope")
+            throw MovoError.aiFailed(stage: .parse, cause: "chat_envelope")
         }
         guard let content = envelope.choices.first?.message.content else {
-            throw MovoError.aiFailed(stage: .parse, cause: "openai_envelope")
+            throw MovoError.aiFailed(stage: .parse, cause: "chat_envelope")
         }
         guard var proposal = AIProposalCoding.decode(content) else {
-            throw MovoError.aiFailed(stage: .parse, cause: "openai_items")
+            throw MovoError.aiFailed(stage: .parse, cause: "chat_items")
         }
 
-        proposal.provider = "openai"
+        proposal.provider = id.rawValue
         proposal.model = currentModel
         proposal.promptTokens = envelope.usage?.promptTokens
         proposal.completionTokens = envelope.usage?.completionTokens
@@ -264,6 +270,21 @@ public struct OpenAIAdapter: AIProvider {
             "messages": .array([
                 .object(["role": .string("system"), "content": .string(AIContextBuilder.instructions)]),
                 .object(["role": .string("user"), "content": .string(input.requestBodyJSONString())])
+            ])
+        ])
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        return try? encoder.encode(payload)
+    }
+
+    /// 测试连接用的最小请求。不带 `response_format`，避免个别自建服务不支持该参数而误报失败。
+    static func probeBody(model: String) -> Data? {
+        let payload: JSONValue = .object([
+            "model": .string(model),
+            "temperature": .int(0),
+            "max_tokens": .int(1),
+            "messages": .array([
+                .object(["role": .string("user"), "content": .string("ping")])
             ])
         ])
         let encoder = JSONEncoder()

@@ -117,6 +117,8 @@ public enum MovoError: LocalizedError, Hashable, Sendable {
     case speechUnavailable(reason: SpeechFailReason)
     /// 无 Key → 手动模式提示
     case noKey(vendor: AIVendor)
+    /// 自定义厂商缺少 Base URL / 模型 ID → 先去设置页补全
+    case providerNotConfigured(vendor: AIVendor)
     /// 网络 / 超时 / 429 / 401 / 解析失败
     case aiFailed(stage: AIStage, cause: String)
     /// 校验未过项 → 收件箱
@@ -136,6 +138,8 @@ public enum MovoError: LocalizedError, Hashable, Sendable {
         case .permissionDenied(let k): "没有\(k.displayName)权限"
         case .speechUnavailable: "暂时无法使用语音"
         case .noKey(let v): "还没有配置 \(v.displayName) 的 Key"
+        case .providerNotConfigured(let v):
+            v == .custom ? "还没有填完自定义厂商信息" : "还没有填完 \(v.displayName) 厂商信息"
         case .aiFailed(let stage, _): stage.displayName
         case .aiRejected: "部分内容需要你确认"
         case .syncFailed: "同步没有完成"
@@ -156,14 +160,23 @@ public enum MovoError: LocalizedError, Hashable, Sendable {
                              : "可以在系统设置里打开权限，也可以直接用文字输入。"
         case .speechUnavailable(let r): "\(r.displayName)。可以先改成文字输入，原文不会丢。"
         case .noKey(let v): "配置 \(v.displayName) 的 Key 后可以使用云整理；现在也可以手动整理。"
+        case .providerNotConfigured(let v):
+            "\(v.displayName)厂商需要 Base URL 与模型 ID。填完后可以使用云整理；现在也可以手动整理。"
         case .aiFailed(let stage, let cause):
-            switch stage {
-            case .auth: "Key 可能不正确或已失效。检查后可以重试，也可以先手动整理。"
-            case .rateLimited: "稍等一下再试，原文已经保存。"
-            case .timeout: "网络较慢，原文已经保存，可以重试或手动整理。"
-            case .network: "当前网络不可用，原文已经保存。"
-            case .parse: "返回内容无法解析，原文已经保存，可以重试。"
-            case .unknown: "原文已经保存。\(cause)"
+            // 已知失败分类优先给出可执行解释（自定义厂商的地址/证书/模型问题都在这里）；
+            // 未知 cause 才回落到按阶段的通用文案。
+            if let explanation = AIFailureCause.explanation(for: cause) {
+                explanation
+            } else {
+                switch stage {
+                case .auth: "Key 可能不正确或已失效。检查后可以重试，也可以先手动整理。"
+                case .rateLimited: "稍等一下再试，原文已经保存。"
+                case .timeout: "网络较慢，原文已经保存，可以重试或手动整理。"
+                case .network: "当前网络不可用，原文已经保存。"
+                case .parse: "返回内容无法解析，原文已经保存，可以重试。"
+                case .invalidRequest: "按现在的设置没能完成这次调用，原文已经保存。"
+                case .unknown: "原文已经保存。\(cause)"
+                }
             }
         case .aiRejected(let reasons):
             reasons.prefix(2).map(\.description).joined(separator: "；")
@@ -172,6 +185,13 @@ public enum MovoError: LocalizedError, Hashable, Sendable {
         case .exportUnavailable(let reason): reason
         case .cancelled: "本次操作已取消，原文与已有内容不受影响。"
         }
+    }
+
+    /// 已知失败分类的可执行解释（不含「原文已经保存」这类录入语境的说法）。
+    /// 设置页「测试连接」用它，因为那里并没有待整理的原文。
+    public var diagnosticDetail: String? {
+        guard case .aiFailed(_, let cause) = self else { return nil }
+        return AIFailureCause.explanation(for: cause)
     }
 
     /// UI 不允许出现无恢复入口的错误态
@@ -185,8 +205,13 @@ public enum MovoError: LocalizedError, Hashable, Sendable {
                                : [.editText, .openSettings(section: .manage)]
         case .speechUnavailable: [.retry, .editText]
         case .noKey: [.openSettings(section: .ai), .editText]
+        case .providerNotConfigured: [.openSettings(section: .ai), .editText]
         case .aiFailed(let stage, _):
-            stage == .auth ? [.openSettings(section: .ai), .editText] : [.retry, .editText]
+            switch stage {
+            // 鉴权与「服务端拒绝」都要改设置，重试没有意义
+            case .auth, .invalidRequest: [.openSettings(section: .ai), .editText]
+            default: [.retry, .editText]
+            }
         case .aiRejected: [.viewInbox]
         case .syncFailed: [.retry, .openSettings(section: .sync)]
         case .conflictPending: [.viewConflicts]
@@ -195,12 +220,25 @@ public enum MovoError: LocalizedError, Hashable, Sendable {
         }
     }
 
+    /// 「还没配置好」类错误：不是整理失败，而是缺配置。
+    /// 输入管线据此把用户送去设置页补全，而不是渲染成「整理没能完成」（M04-Failed）。
+    public var isConfigurationGap: Bool {
+        switch self {
+        case .noKey, .providerNotConfigured: true
+        default: false
+        }
+    }
+
     /// 是否值得自动重试（8.6：仅网络/429/5xx）
     public var isRetryable: Bool {
         switch self {
-        case .aiFailed(let stage, _): stage == .network || stage == .rateLimited || stage == .timeout
-        case .syncFailed: true
-        default: false
+        case .aiFailed(let stage, let cause):
+            guard stage == .network || stage == .rateLimited || stage == .timeout else { return false }
+            return !AIFailureCause.isDeterministic(cause)
+        case .syncFailed:
+            return true
+        default:
+            return false
         }
     }
 

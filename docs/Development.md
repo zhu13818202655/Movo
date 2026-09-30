@@ -112,7 +112,7 @@ Movo/
 │   └── Export/                       导出 Markdown / JSON
 │
 ├── Intelligence/                     智能层：AI 调用 + 隐私 + 语音
-│   ├── Providers/                    厂商适配（OpenAI / Claude）、Keychain、超时重试
+│   ├── Providers/                    厂商适配（内置 DeepSeek + 自定义 OpenAI 兼容）、Keychain、超时重试
 │   ├── Planning/                     提案契约 / 校验 / 执行策略 / 物化
 │   ├── Privacy/                      隐私分流 / 云上下文构建 / 本地直执
 │   ├── Speech/                       本机语音转写
@@ -123,7 +123,7 @@ Movo/
 │   └── Components/
 ├── Config/                           运行时 JSON 配置（作为资源打进 MovoKit）
 │   ├── Defaults.json                 通知时刻、AI 阈值、超时等易变参数
-│   ├── ModelsCatalog.json            可用大模型清单 + 各厂商 endpoint
+│   ├── ModelsCatalog.json            内置厂商的 chat completions 端点与模型清单
 │   └── HealthKeywords.json           健康敏感词表（命中即走本地，不上云）
 │
 ├── ── Movo（application，UI 与装配）─────────────────────────
@@ -232,8 +232,9 @@ Movo/
 |---|---|---|
 | `Intelligence/Providers/AIKeyStore.swift` | API Key 存 Keychain，`ThisDeviceOnly`，不参与 iCloud Keychain 同步 | **[大模型]** |
 | `Intelligence/Providers/AIProvider.swift` | 厂商适配契约（只做请求构造 + 响应解析） | **[大模型]** |
-| `Intelligence/Providers/OpenAIAdapter.swift` | OpenAI Chat Completions + `json_object` 结构化输出 | **[大模型]** |
-| `Intelligence/Providers/ClaudeAdapter.swift` | Claude Messages + `tool_use` 结构化输出 | **[大模型]** |
+| `Intelligence/Providers/OpenAICompatibleAdapter.swift` | Chat Completions + `json_object` 结构化输出（内置与自定义厂商共用） | **[大模型]** |
+| `Intelligence/Providers/AIProviderResolver.swift` | 把厂商与配置解析为端点/模型；自定义厂商未配全时抛 `providerNotConfigured` | **[大模型]** |
+| `Intelligence/Providers/AISettingsStore.swift` | 厂商选择与自定义 Base URL／模型 ID 的本机持久化 | **[大模型]** |
 | `Intelligence/Providers/AITransport.swift` | 超时（连接 10s / 总 30s）、重试、取消 | **[大模型]** |
 | `Intelligence/Planning/ProposalService.swift` | 主流水线 C2→C7 | **[大模型]** |
 | `Intelligence/Planning/AIProposal.swift` | 模型输出契约（JSON Schema） | |
@@ -280,12 +281,14 @@ Movo/
 
 | Target | 用例数 | 覆盖内容 |
 |---|---|---|
-| `MovoDomainTests` | 17 | 业务规则、结构约束、命令与查询 |
+| `MovoDomainTests` | 39 | 业务规则、结构约束、命令与查询、AI 错误模型 |
 | `MovoDataTests` | 11 | SwiftData 仓储事务、编解码、round-trip |
 | `MovoPrivacyTests` | 13 | 隐私分流、云上下文断言（不触网） |
-| `MovoAdapterTests` | 16 | OpenAI / Claude 适配器（用固定响应，不触网） |
+| `MovoAdapterTests` | 29 | OpenAI 兼容适配器、厂商解析、自定义 Base URL 归一化、失败分类（用固定响应，不触网） |
 | `MovoSyncTests` | 18 | 合并算法、同步循环、墓碑 |
-| **合计** | **75** | |
+| **合计** | **110** | |
+
+用例数为当前快照，随迭代变动；以 `Scripts/verify.sh` 的实际输出为准。
 
 测试全部在 **macOS 上运行**（不需要模拟器、不需要真机、不需要网络、不需要 Key）。这是本项目最高效的验证手段：改任何非 UI 逻辑，先跑这里。
 
@@ -300,7 +303,8 @@ Movo/
 | 进度百分比不对 | `Domain/Policies/ProgressPolicy.swift` |
 | AI 输出没被采纳 / 进了收件箱 | `Intelligence/Planning/ProposalValidator.swift`、`ExecutionPolicy.swift` |
 | 不该上云的内容上云了 | `Intelligence/Privacy/PrivacySplitter.swift`、`ContextBuilder.swift` |
-| AI 请求失败 / 超时 | `Intelligence/Providers/AITransport.swift`、对应 Adapter |
+| AI 请求失败 / 超时 | `Intelligence/Providers/AITransport.swift`、对应 Adapter、`Domain/AIFailureCause.swift`（失败原因文案） |
+| 自定义厂商填了地址却连不上 | `Movo/project.yml` 的 `info:` 段（ATS 与本地网络权限），见 §7.3 与 §8 排障表 |
 | 模型清单要增删 | `Config/ModelsCatalog.json` |
 | 通知没响 / 时间不对 | `Notifications/NotificationPlanner.swift`（纯计算，可单测） |
 | 同步冲突 | `Data/Sync/FieldMerge.swift` + `Features/Settings/ConflictResolutionScreen.swift` |
@@ -385,7 +389,7 @@ xcodebuild build \
 ```bash
 cd /Users/louis/codes/movo/Movo
 
-# 全量（75 个用例，宿主机 macOS 上跑）
+# 全量（110 个用例，宿主机 macOS 上跑）
 xcodebuild test \
   -project Movo.xcodeproj -scheme Movo -configuration Debug \
   -destination 'platform=macOS' \
@@ -916,21 +920,68 @@ DEVELOPMENT_TEAM[sdk=iphoneos*]: "RPD22D948M"
 
 | 文件 | 内容 |
 |---|---|
-| `Movo/Config/ModelsCatalog.json` | 模型清单、各厂商 endpoint、测试连通用的地址 |
+| `Movo/Config/ModelsCatalog.json` | 内置厂商（DeepSeek）的 chat completions 端点与模型清单 |
 | `Movo/Config/Defaults.json` | 超时（连接 10s / 总 30s）、重试次数、置信度阈值、单次输入上限 |
 | `Movo/Config/HealthKeywords.json` | 健康敏感词表，命中即判定为受限内容 |
 | `Movo/Intelligence/Providers/AIKeyStore.swift` | Key 存 Keychain：service = `Movo.AIKey.<vendor>`，`kSecAttrAccessibleWhenUnlockedThisDeviceOnly`，**不参与 iCloud Keychain 同步** |
-| `Movo/Intelligence/Providers/AITransport.swift` | 超时 / 重试 / 取消，仅网络类错误与 429/5xx 自动重试 |
-| `Movo/Intelligence/Providers/{OpenAI,Claude}Adapter.swift` | 厂商协议适配 |
+| `Movo/Intelligence/Providers/AITransport.swift` | 超时 / 重试 / 取消；把 `URLError` 归一为可诊断的失败分类；仅网络类错误与 429/5xx 自动重试 |
+| `Movo/Intelligence/Providers/OpenAICompatibleAdapter.swift` | OpenAI 兼容协议适配（内置厂商与自定义厂商共用） |
+| `Movo/Intelligence/Providers/AIProviderResolver.swift` | 厂商 + 用户配置 → 端点/模型；自定义未填全时抛 `providerNotConfigured` |
+| `Movo/Intelligence/Providers/AISettingsStore.swift` | 厂商选择与自定义 Base URL／模型 ID 的本机持久化（Key 不在此处） |
+| `Movo/Domain/AIFailureCause.swift` | 失败原因的机器标识 → 用户可执行解释的映射表 |
 | `Movo/Intelligence/Privacy/{PrivacySplitter,ContextBuilder}.swift` | 决定哪些内容可以出本机 |
 
 **Key 的获取与使用**
 
-Key 由用户在 App 内「设置 → AI 与数据」填写，运行时存进 Keychain，**不写在代码或配置文件里**。key 前缀：OpenAI 为 `sk-`，Claude 为 `sk-ant-`。
+Key 与自定义配置由用户在 App 内「设置 → AI 与数据」填写：内置 DeepSeek 的 Key 前缀为 `sk-`；自定义厂商（OpenAI 兼容）额外填写 Base URL 与模型 ID，Key 格式由用户自行决定、仅做长度预检。Key 运行时存进 Keychain，**不写在代码或配置文件里**；Base URL 与模型 ID 非凭据，存在本机偏好。
 
 **出网要求**：`Movo-macOS.entitlements` 中的 `com.apple.security.network.client` 必须为 true，否则 macOS 沙箱下所有 API 请求会被拒。iOS 无需额外声明。
 
-**测试不触网**：`MovoAdapterTests`（16 个用例）与 `MovoPrivacyTests`（13 个用例）使用固定响应与请求抓取，跑测试无需任何 Key。
+#### 自定义厂商的网络要求（ATS）
+
+自定义厂商的 Base URL 由用户填写，应用事先不知道会是什么地址，**无法按域名逐个放行**。实际形态覆盖：
+
+```
+http://203.0.113.10:21003/v1     公网 IP + 明文 HTTP（203.0.113.0/24 为文档保留段）
+http://192.168.1.9:8000/v1       局域网 vLLM / LM Studio
+http://localhost:11434/v1        Ollama
+```
+
+系统自 **iOS 17 / macOS 14 起默认拒绝连接裸 IP**（公网与局域网皆然），并且一贯拒绝明文 HTTP。未放行时自定义厂商必然失败，
+而传输层只能看到 `URLError`，界面上只会显示「网络不可用」。因此 `Movo/project.yml` 的 `info:` 段声明：
+
+| 键 | 作用 |
+|---|---|
+| `NSAppTransportSecurity.NSAllowsArbitraryLoads` | 取消 ATS 的**协议限制**，明文 HTTP 与裸 IP 均可连接。不改动 URLSession 的默认服务器信任评估，HTTPS 连接（如 DeepSeek）仍按原样校验 |
+| `NSLocalNetworkUsageDescription` | 局域网地址需要本地网络访问权限（iOS 14+ / macOS 15+）。这是独立于 ATS 的另一套机制，公网 IP 不触发 |
+
+> ⚠️ **不要把 `NSAllowsLocalNetworking` 加回来。** Apple 明确规定：只要 Info.plist 中存在
+> `NSAllowsLocalNetworking` / `NSAllowsArbitraryLoadsInWebContent` / `NSAllowsArbitraryLoadsForMedia` 中任意一个，
+> iOS 10+ / macOS 10.12+ 就会**忽略 `NSAllowsArbitraryLoads` 并改用其默认值 NO**。
+> 两者同时存在等于静默关掉这个例外，且不会有任何报错。
+
+**取舍**：`NSAllowsArbitraryLoads` 放宽的是「允许明文」，不是「降低 HTTPS 校验」。副作用是 API Key 与整理内容可能以明文过网。
+
+- 上架 App Store 需在审核时说明理由；Apple 认可的理由之一是「必须连接由第三方管理、不支持安全连接的服务器」。
+- 能改成 HTTPS（反向代理加证书）就改：公网明文 HTTP 下，`Authorization: Bearer` 会被路径上任何人读到。
+- 若将来只需服务固定域名，应换成更窄的 `NSExceptionDomains` + `NSExceptionAllowsInsecureHTTPLoads`。
+- **自签名 HTTPS 证书**不被默认信任评估接受；`NSExceptionAllowsInsecureHTTPLoads` 是按域名生效的，用户自填地址无法事先枚举，
+  因此自签名场景需要写自定义服务器信任评估代码，或让用户改用受信任证书。
+
+`NSAppTransportSecurity` 是嵌套字典，**无法用 `INFOPLIST_KEY_*` 表达**，所以工程额外声明了一个由 `info:` 段生成的
+`Movo/Info.plist`（不入库）。Xcode 会把 `settings` 里的全部 `INFOPLIST_KEY_*` 合并进该文件；产物里同时能看到
+`NSAllowsArbitraryLoads`、`NSPrincipalClass`、`UIApplicationSceneManifest` 等键。
+
+**失败原因必须可诊断**：`AITransport` 把 `URLError` 归一为 `AIFailureCause` 中的语义标识
+（`ats_plain_http` / `tls_trust` / `dns` / `connect_refused` / `offline` / `connection_lost`），
+`MovoError.diagnosticDetail` 给出可执行解释，`MovoError.message` 优先采用它；设置页「测试连接」
+直接用 `diagnosticDetail`（那里没有待整理的原文，不该出现「原文已经保存」）。前三种属确定性失败，
+`isRetryable` 返回 false，避免对着写错的地址反复重试。
+
+**配置缺失 ≠ 整理失败**：`MovoError.isConfigurationGap` 标记 `noKey` 与 `providerNotConfigured`，
+输入管线据此把用户送到设置页补全，而不是渲染成 M04-Failed「整理没能完成」（见 `Features/Capture/CaptureStatusScreens.swift`）。
+
+**测试不触网**：`MovoAdapterTests`（29 个用例）与 `MovoPrivacyTests`（13 个用例）使用固定响应与请求抓取，跑测试无需任何 Key。
 
 **日志脱敏**：`Movo/Intelligence/Support/RedactedLogger.swift` 只输出 `provider / model / status / latencyMs / tokens / itemCount / rejectedCount`，不输出正文与 Key。新增日志请遵守此约定。
 
@@ -955,6 +1006,10 @@ iOS 侧麦克风与语音识别**不需要额外 entitlement**，仅靠 Info.pli
 | `error: no such module 'MovoKit'` | 工程未重新生成 | `xcodegen generate --spec project.yml` |
 | 新增文件在 Xcode 里看不到 | 同上 | 同上 |
 | `swift-plugin-server produced malformed response` | 沙箱拦截 `~/.swiftpm/security` | 换到 VS Code 内置终端跑，见 §3.6 |
+| 自定义厂商「测试连接」失败，提示**网络不可用** | 明文 HTTP 或裸 IP 被 ATS 拦下；或缺少本地网络权限 | 见 §7.3「自定义厂商的网络要求」。错误文案会区分「明文 HTTP」「证书」「主机名」 |
+| 已设 `NSAllowsArbitraryLoads: true` 却仍被 ATS 拦 | Info.plist 里同时存在 `NSAllowsLocalNetworking` 等键，导致前者被忽略 | 删掉那些键，只保留 `NSAllowsArbitraryLoads`，见 §7.3 的警告 |
+| 自定义厂商提示**服务端拒绝了这次请求** | Base URL 或模型 ID 不对（400 / 404 / 422） | 请求发往 `<Base URL>/chat/completions`；自建服务通常要带 `/v1` |
+| 自定义厂商提示**还没有填完自定义厂商信息** | Base URL 与模型 ID 没填全 | 设置 → AI 与数据 → 切到「自定义」，补齐两个字段（不是 Key 的问题） |
 | 启动日志出现 `NSSecureCoding allowed classes list contains [NSObject class]` / `<decode: bad range for ...>` | **系统框架自身**在用 `NSKeyedUnarchiver` 解码时给出的告警（见下方说明） | 本项目无归档代码，无需处理 |
 | shell 脚本报 `VAR?: unbound variable`（变量名后带乱码） | macOS bash 3.2 把紧跟变量的全角字符首字节吞进了变量名 | 变量展开改写成 `${VAR}`，见 §3.5 注 |
 | 构建报 `targeted device family` / 架构错误 | destination 写错 | 真机用 `platform=iOS,id=00008150-000055A01AEA401C`；模拟器用 `platform=iOS Simulator,name="iPhone 17 Pro"` |

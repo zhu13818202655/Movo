@@ -269,15 +269,14 @@ public struct ModelCatalog: Sendable, Codable {
         public var vendor: AIVendor
         public var displayName: String
         public var keyPrefixHint: String
+        /// OpenAI 兼容的 chat completions 端点（测试连接与实际调用共用）
         public var endpoint: String
-        public var testEndpoint: String?
         public var models: [Entry]
 
         enum CodingKeys: String, CodingKey {
             case vendor, endpoint, models
             case displayName = "display_name"
             case keyPrefixHint = "key_prefix_hint"
-            case testEndpoint = "test_endpoint"
         }
     }
 
@@ -305,15 +304,16 @@ public struct ModelCatalog: Sendable, Codable {
         case catalogVersion = "catalog_version"
     }
 
+    /// 内置兜底：仅 DeepSeek。自定义厂商不进入目录，由用户配置提供端点与模型。
     public static let fallback = ModelCatalog(catalogVersion: "fallback", vendors: [
-        VendorEntry(vendor: .openai, displayName: "OpenAI", keyPrefixHint: "sk-",
-                    endpoint: "https://api.openai.com/v1/chat/completions",
-                    testEndpoint: "https://api.openai.com/v1/models",
-                    models: [Entry(id: "gpt-5.1", displayName: "GPT-5.1")]),
-        VendorEntry(vendor: .claude, displayName: "Claude", keyPrefixHint: "sk-ant-",
-                    endpoint: "https://api.anthropic.com/v1/messages",
-                    testEndpoint: "https://api.anthropic.com/v1/models",
-                    models: [Entry(id: "claude-sonnet-4-6", displayName: "Claude Sonnet 4.6")])
+        VendorEntry(vendor: .deepseek, displayName: "DeepSeek", keyPrefixHint: "sk-",
+                    endpoint: "https://api.deepseek.com/v1/chat/completions",
+                    models: [
+                        Entry(id: "deepseek-v4-pro", displayName: "DeepSeek V4 Pro",
+                              contextHint: "结构化输出更稳，适合复杂整理"),
+                        Entry(id: "deepseek-v4-flash", displayName: "DeepSeek V4 Flash",
+                              contextHint: "更快更省，适合日常短句整理")
+                    ])
     ])
 
     public func entry(for vendor: AIVendor) -> VendorEntry? {

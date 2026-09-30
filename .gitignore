@@ -21,6 +21,8 @@ Movo/build-ios/
 # --------------------------- 生成的 Xcode 工程 ---------------------------
 # 由 project.yml 生成，改工程设置请改 project.yml
 Movo/Movo.xcodeproj/
+# ATS 等嵌套键无法用 INFOPLIST_KEY_* 表达，故由 project.yml 的 info: 段生成
+Movo/Info.plist
 *.xcworkspace/
 
 # --------------------------- Xcode 用户态数据 ----------------------------

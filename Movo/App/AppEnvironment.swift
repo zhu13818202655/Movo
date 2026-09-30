@@ -59,8 +59,34 @@ public final class AppEnvironment {
 
     // MARK: AI 选择（8.5）
 
-    public var vendor: AIVendor
-    public var model: String
+    /// 当前厂商：内置 DeepSeek 或用户自定义（OpenAI 兼容）。切换后自动回落该厂商默认模型。
+    public var vendor: AIVendor {
+        didSet {
+            guard oldValue != vendor else { return }
+            model = Self.defaultModel(for: vendor, catalog: catalog, custom: customProvider)
+            persistAISettings()
+        }
+    }
+
+    /// 当前模型 id。内置厂商取自目录；自定义厂商等于用户填写的模型 ID。
+    public var model: String {
+        didSet {
+            guard oldValue != model else { return }
+            persistAISettings()
+        }
+    }
+
+    /// 自定义厂商的 Base URL 与模型 ID（Key 只经 `AIKeyStore` 进钥匙串）。
+    public var customProvider: CustomProviderConfig {
+        didSet {
+            guard oldValue != customProvider else { return }
+            if vendor == .custom { model = customProvider.trimmedModelID }
+            persistAISettings()
+        }
+    }
+
+    /// 选择与自定义配置的持久化。preview / 测试用内存实现，不写真实偏好。
+    private let aiSettingsStore: any AISettingsStore
 
     // MARK: 结果与撤销（C9）
 
@@ -93,18 +119,47 @@ public final class AppEnvironment {
                 keyStore: any AIKeyStore,
                 speech: any SpeechTranscriptionService,
                 notificationScheduler: any NotificationScheduling = LocalNotificationScheduler(),
-                vendor: AIVendor = .openai) {
+                aiSettingsStore: any AISettingsStore = InMemoryAISettingsStore(),
+                vendor: AIVendor? = nil) {
         self.store = store
         self.defaults = defaults
         self.catalog = catalog
         self.keyStore = keyStore
         self.speech = speech
         self.notificationScheduler = notificationScheduler
-        self.vendor = vendor
-        self.model = catalog.entry(for: vendor)?.models.first?.id ?? ""
+        self.aiSettingsStore = aiSettingsStore
+
+        let saved = aiSettingsStore.load()
+        let resolvedVendor = vendor ?? saved.vendor
+        self.vendor = resolvedVendor
+        self.customProvider = saved.custom
+        self.model = Self.initialModel(for: resolvedVendor, catalog: catalog, saved: saved)
         self.notificationsHideDetails =
             (UserDefaults.standard.object(forKey: AppEnvironment.hideDetailsKey) as? Bool)
             ?? defaults.notifications.lockScreenHideDetails
+    }
+
+    /// 启动时的模型：自定义厂商取用户配置；内置厂商优先沿用上次选择，失效则回落目录首项。
+    private static func initialModel(for vendor: AIVendor,
+                                     catalog: ModelCatalog,
+                                     saved: AISettings) -> String {
+        switch vendor {
+        case .custom:
+            return saved.custom.trimmedModelID
+        case .deepseek:
+            let available = catalog.entry(for: vendor)?.models.map(\.id) ?? []
+            return available.contains(saved.model) ? saved.model : (available.first ?? "")
+        }
+    }
+
+    private static func defaultModel(for vendor: AIVendor,
+                                     catalog: ModelCatalog,
+                                     custom: CustomProviderConfig) -> String {
+        AIProviderResolver.defaultModel(vendor: vendor, catalog: catalog, custom: custom)
+    }
+
+    private func persistAISettings() {
+        aiSettingsStore.save(AISettings(vendor: vendor, model: model, custom: customProvider))
     }
 
     // MARK: - 同步与通知（P3 / T0.12）
@@ -217,12 +272,13 @@ public final class AppEnvironment {
         let store = DomainStore(repository: repository, defaults: defaults)
         return AppEnvironment(store: store, defaults: defaults, catalog: catalog,
                               keyStore: KeychainAIKeyStore(),
-                              speech: AppleSpeechTranscriptionService(defaults: defaults))
+                              speech: AppleSpeechTranscriptionService(defaults: defaults),
+                              aiSettingsStore: UserDefaultsAISettingsStore())
     }
 
-    /// 预览/测试环境：内存仓库 + 内存 Keychain。
+    /// 预览/测试环境：内存仓库 + 内存 Keychain + 内存 AI 偏好。
     public static func preview(today: Date? = nil,
-                               vendor: AIVendor = .openai) -> AppEnvironment {
+                               vendor: AIVendor? = nil) -> AppEnvironment {
         let defaults = ConfigLoader.loadDefaults()
         let catalog = ConfigLoader.loadModelCatalog()
         let clock: MovoClock = today.map { TravelClock($0) } ?? SystemClock()
@@ -231,18 +287,43 @@ public final class AppEnvironment {
         return AppEnvironment(store: store, defaults: defaults, catalog: catalog,
                               keyStore: InMemoryAIKeyStore(), speech: MockSpeechTranscriptionService(),
                               notificationScheduler: InMemoryNotificationScheduler(),
+                              aiSettingsStore: InMemoryAISettingsStore(),
                               vendor: vendor)
     }
 
     // MARK: - AI 提供商（8.2 / 8.5）
 
-    public func availableModels() -> [ModelInfo] {
-        (catalog.entry(for: vendor)?.models ?? []).map(ModelInfo.init(entry:))
+    /// 该厂商当前可选的模型。自定义厂商只有用户填写的那个模型 ID。
+    public func availableModels(for vendor: AIVendor? = nil) -> [ModelInfo] {
+        let target = vendor ?? self.vendor
+        switch target {
+        case .deepseek:
+            return (catalog.entry(for: .deepseek)?.models ?? []).map(ModelInfo.init(entry:))
+        case .custom:
+            let id = customProvider.trimmedModelID
+            return id.isEmpty ? [] : [ModelInfo(id: id, displayName: id)]
+        }
     }
 
     public func hasKey(for vendor: AIVendor? = nil) -> Bool {
         let target = vendor ?? self.vendor
         return (keyStore.key(vendor: target)?.isEmpty == false)
+    }
+
+    /// 该厂商是否既填了 Key、又（对自定义厂商）填完了 Base URL 与模型 ID。
+    public func isConfigured(for vendor: AIVendor? = nil) -> Bool {
+        let target = vendor ?? self.vendor
+        guard hasKey(for: target) else { return false }
+        return target == .custom ? customProvider.isComplete : true
+    }
+
+    /// 未就绪时的错误：区分「没有 Key」与「自定义厂商没填完」。
+    public func configurationError(for vendor: AIVendor? = nil) -> MovoError {
+        let target = vendor ?? self.vendor
+        if target == .custom, !customProvider.isComplete {
+            return .providerNotConfigured(vendor: .custom)
+        }
+        return .noKey(vendor: target)
     }
 
     public func maskedKey(for vendor: AIVendor? = nil) -> String? {
@@ -258,30 +339,25 @@ public final class AppEnvironment {
         try keyStore.delete(vendor: vendor ?? self.vendor)
     }
 
-    /// 8.1 设置页"测试连接"
+    /// 8.1 设置页"测试连接"。自定义厂商未配置完整时抛 `.providerNotConfigured`。
     public func testConnection(vendor: AIVendor? = nil, model: String? = nil) async throws {
-        let target = vendor ?? self.vendor
-        let provider = makeProvider(vendor: target, model: model)
+        let provider = try makeProvider(vendor: vendor, model: model)
         try await provider.testConnection()
     }
 
-    public func makeProvider(vendor: AIVendor? = nil, model: String? = nil) -> any AIProvider {
+    public func makeProvider(vendor: AIVendor? = nil, model: String? = nil) throws -> any AIProvider {
         let target = vendor ?? self.vendor
         let chosen = model ?? (target == self.vendor ? self.model : nil)
-        switch target {
-        case .openai:
-            return OpenAIAdapter(keyStore: keyStore, catalog: catalog,
-                                 defaults: defaults, model: chosen)
-        case .claude:
-            return ClaudeAdapter(keyStore: keyStore, catalog: catalog,
-                                 defaults: defaults, model: chosen)
-        }
+        let resolved = try AIProviderResolver.resolve(vendor: target, catalog: catalog,
+                                                      custom: customProvider, model: chosen)
+        return OpenAICompatibleAdapter(resolved: resolved, keyStore: keyStore, defaults: defaults)
     }
 
-    public func makeProposalService(vendor: AIVendor? = nil, model: String? = nil) -> ProposalService {
-        ProposalService.make(vendor: vendor ?? self.vendor, keyStore: keyStore,
-                             catalog: catalog, defaults: defaults,
-                             model: model ?? self.model)
+    public func makeProposalService(vendor: AIVendor? = nil, model: String? = nil) throws -> ProposalService {
+        let target = vendor ?? self.vendor
+        let chosen = model ?? (target == self.vendor ? self.model : nil)
+        return try ProposalService.make(vendor: target, keyStore: keyStore, catalog: catalog,
+                                        custom: customProvider, defaults: defaults, model: chosen)
     }
 
     // MARK: - 撤销

@@ -73,6 +73,10 @@ public struct AITransport: Sendable {
                     lastError = .aiFailed(stage: .rateLimited, cause: "http_429")
                 case 500...599:
                     lastError = .aiFailed(stage: .rateLimited, cause: "http_\(http.statusCode)")
+                case 400...499:
+                    // 其余 4xx 是请求本身的问题（端点路径或模型 ID 不对）：
+                    // 不重试，并单独成阶段，避免被渲染成「未知错误」。
+                    throw MovoError.aiFailed(stage: .invalidRequest, cause: "http_\(http.statusCode)")
                 default:
                     throw MovoError.aiFailed(stage: .unknown, cause: "http_\(http.statusCode)")
                 }
@@ -83,11 +87,11 @@ public struct AITransport: Sendable {
                 throw MovoError.cancelled
             } catch let urlError as URLError {
                 if urlError.code == .cancelled { throw MovoError.cancelled }
-                if urlError.code == .timedOut {
-                    lastError = .aiFailed(stage: .timeout, cause: "timeout")
-                } else {
-                    lastError = .aiFailed(stage: .network, cause: "urlerror_\(urlError.code.rawValue)")
-                }
+                let failure = MovoError.aiFailed(stage: Self.stage(for: urlError.code),
+                                                 cause: Self.cause(for: urlError.code))
+                // 地址／协议／证书本身不对是确定性失败，重试不会变好
+                if !failure.isRetryable { throw failure }
+                lastError = failure
             } catch {
                 throw MovoError.aiFailed(stage: .unknown, cause: "transport")
             }
@@ -99,5 +103,39 @@ public struct AITransport: Sendable {
             }
         }
         throw lastError
+    }
+
+    // MARK: - URLError 分类（8.6 的补充：让失败原因可诊断）
+
+    /// 只有超时单独成阶段；其余都归入网络阶段，具体原因由 `cause(for:)` 区分。
+    static func stage(for code: URLError.Code) -> AIStage {
+        code == .timedOut ? .timeout : .network
+    }
+
+    /// 把 `URLError` 归一为可诊断的 cause。
+    /// 自建端点最常见的两类失败——明文 HTTP 被 ATS 拦下、自签名证书不受信——
+    /// 必须与普通断网区分开，否则用户只会看到「网络不可用」而无从下手。
+    static func cause(for code: URLError.Code) -> String {
+        switch code {
+        case .timedOut:
+            "timeout"
+        case .appTransportSecurityRequiresSecureConnection:
+            AIFailureCause.atsPlainHTTP
+        case .secureConnectionFailed, .serverCertificateHasBadDate,
+             .serverCertificateUntrusted, .serverCertificateNotYetValid,
+             .serverCertificateHasUnknownRoot, .clientCertificateRejected,
+             .clientCertificateRequired:
+            AIFailureCause.tlsUntrusted
+        case .cannotFindHost, .dnsLookupFailed:
+            AIFailureCause.dnsFailure
+        case .cannotConnectToHost:
+            AIFailureCause.connectionRefused
+        case .notConnectedToInternet:
+            AIFailureCause.offline
+        case .networkConnectionLost:
+            AIFailureCause.connectionLost
+        default:
+            "urlerror_\(code.rawValue)"
+        }
     }
 }

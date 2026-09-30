@@ -65,7 +65,7 @@ enum SettingsSummary {
     static func text(for section: RecoveryAction.SettingsSection, env: AppEnvironment) -> String {
         switch section {
         case .ai:
-            guard env.hasKey() else { return "还没有配置 Key" }
+            guard env.isConfigured() else { return env.configurationError().title }
             return "\(env.vendor.displayName) · \(env.maskedKey() ?? "已配置")"
         case .privacy:
             return "云端 AI 开关"

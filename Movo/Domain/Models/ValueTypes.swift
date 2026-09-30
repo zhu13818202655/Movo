@@ -328,7 +328,7 @@ public enum SpeechFailReason: String, Codable, Sendable, CaseIterable, Identifia
 }
 
 public enum AIStage: String, Codable, Sendable, CaseIterable, Identifiable {
-    case auth, rateLimited, timeout, network, parse, unknown
+    case auth, rateLimited, timeout, network, parse, invalidRequest, unknown
     public var id: String { rawValue }
     public var displayName: String {
         switch self {
@@ -337,20 +337,35 @@ public enum AIStage: String, Codable, Sendable, CaseIterable, Identifiable {
         case .timeout: "请求超时"
         case .network: "网络不可用"
         case .parse: "返回内容无法解析"
+        case .invalidRequest: "服务端拒绝了这次请求"
         case .unknown: "未知错误"
         }
     }
 }
 
+/// AI 提供商。仅内置厂商会读取 `ModelCatalog`；`custom` 由用户在设置页自行填写
+/// Base URL / 模型 ID（协议固定为 OpenAI 兼容）。
 public enum AIVendor: String, Codable, Sendable, CaseIterable, Identifiable {
-    case openai, claude
+    case deepseek
+    case custom
+
     public var id: String { rawValue }
+
     public var displayName: String {
         switch self {
-        case .openai: "OpenAI"
-        case .claude: "Claude"
+        case .deepseek: "DeepSeek"
+        case .custom: "自定义"
         }
     }
+
+    /// 内置厂商的端点与模型清单来自目录；自定义厂商来自用户配置。
+    public var isBuiltin: Bool {
+        switch self {
+        case .deepseek: true
+        case .custom: false
+        }
+    }
+
     /// 8.1 Keychain service 名
     public var keychainService: String { "Movo.AIKey.\(rawValue)" }
 }

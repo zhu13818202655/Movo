@@ -81,8 +81,10 @@ public struct ProcessingScreen: View {
         timer?.cancel()
         let preparation = env.lastPreparation
         if let error = preparation?.error {
-            // 无 Key 或失败：原文已保存（M04-Failed）
-            if case .noKey = error {
+            // 「还没配置好」（无 Key / 自定义厂商没填完）不是整理失败：原文已保存，
+            // 本地分流结果照常展示，由结果页的横幅给出「去设置页补全」的恢复入口（M02）。
+            // 其余错误才是 M04-Failed。
+            if error.isConfigurationGap {
                 router.push(.captureResult(captureID: captureID))
             } else {
                 router.push(.captureFailed(captureID: captureID))

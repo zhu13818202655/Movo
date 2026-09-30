@@ -237,7 +237,7 @@ public struct AIProposal: Sendable, Hashable {
 
 public enum AIProposalSchema {
 
-    /// 工具名（Claude tool_use 用）
+    /// 工具名（供支持 tool_use 的厂商未来接入；当前适配器走 JSON 模式）
     public static let toolName = "movo_organize"
 
     /// 与 `AIProposalItem` 严格对应的 JSON Schema

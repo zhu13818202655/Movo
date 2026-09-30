@@ -18,10 +18,26 @@ import AppKit
 
 // MARK: - AI 与数据（8.1 / T2.2）
 
+/// URL / 模型 ID 这类标识符输入：禁用自动纠正；iOS 上再关掉首字母大写。
+/// （`textInputAutocapitalization` 在 macOS 上不可用，必须按平台条件编译。）
+private struct IdentifierInputStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        #if os(iOS)
+        content.autocorrectionDisabled().textInputAutocapitalization(.never)
+        #else
+        content.autocorrectionDisabled()
+        #endif
+    }
+}
+
+private extension View {
+    func identifierInputStyle() -> some View { modifier(IdentifierInputStyle()) }
+}
+
 struct AISettingsView: View {
     @Environment(AppEnvironment.self) private var env
 
-    @State private var vendor: AIVendor = .openai
+    @State private var vendor: AIVendor = .deepseek
     @State private var model: String = ""
     @State private var keyInput = ""
     @State private var connectionState: ConnectionState = .idle
@@ -33,26 +49,31 @@ struct AISettingsView: View {
         case failure(String)
     }
 
+    /// 自定义厂商配置直接写回环境，随输入即时持久化（Base URL 与模型 ID 非敏感）。
+    private var baseURLBinding: Binding<String> {
+        Binding(get: { env.customProvider.baseURL },
+                set: { env.customProvider.baseURL = $0 })
+    }
+
+    private var customModelBinding: Binding<String> {
+        Binding(get: { env.customProvider.modelID },
+                set: { env.customProvider.modelID = $0 })
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: MovoSpace.l) {
             MovoFormSection("提供商",
-                            footnote: "Key 只保存在本机钥匙串（kSecAttrAccessibleWhenUnlockedThisDeviceOnly），不会同步、不会导出。") {
+                            footnote: "Key 只保存在本机钥匙串（kSecAttrAccessibleWhenUnlockedThisDeviceOnly）；自定义厂商的 Base URL 与模型 ID 存在本机偏好。三者都不会同步到 iCloud，也不会进入导出。") {
                 MovoFormRow("厂商") {
                     MovoRequiredChipRow(options: AIVendor.allCases, selection: $vendor,
                                         label: \.displayName)
                 }
-                MovoFormRow("模型") {
-                    Picker("", selection: $model) {
-                        ForEach(env.availableModels()) { info in
-                            Text(info.displayName).tag(info.id)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                }
-                if let hint = env.catalog.entry(for: vendor)?.keyPrefixHint {
-                    Text("Key 通常以 \(hint) 开头。").font(MovoFont.caption)
-                        .foregroundStyle(MovoColor.muted)
+
+                switch vendor {
+                case .deepseek:
+                    builtinFields
+                case .custom:
+                    customFields
                 }
             }
 
@@ -77,6 +98,12 @@ struct AISettingsView: View {
                         .fill(MovoColor.surface))
                     .overlay(RoundedRectangle(cornerRadius: MovoRadius.button, style: .continuous)
                         .strokeBorder(MovoColor.line, lineWidth: 1))
+
+                if !keyInput.isEmpty, !AIKeyFormat.looksValid(keyInput, vendor: vendor) {
+                    Text("Key 格式不像 \(vendor.displayName) 的常见格式，仍可以先保存再测试连接。")
+                        .font(MovoFont.caption).foregroundStyle(MovoColor.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 HStack(spacing: MovoSpace.s) {
                     MovoButton("保存 Key", kind: .primary,
@@ -141,6 +168,62 @@ struct AISettingsView: View {
             vendor = env.vendor
             model = env.model
         }
+        .onChange(of: vendor) { _, newValue in
+            connectionState = .idle
+            env.vendor = newValue
+            model = env.model
+        }
+        .onChange(of: model) { _, newValue in
+            if vendor == .deepseek { env.model = newValue }
+        }
+    }
+
+    // MARK: 内置厂商字段
+
+    @ViewBuilder
+    private var builtinFields: some View {
+        MovoFormRow("模型") {
+            Picker("", selection: $model) {
+                ForEach(env.availableModels(for: .deepseek)) { info in
+                    Text(info.displayName).tag(info.id)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+        }
+        if let hint = env.catalog.entry(for: .deepseek)?.keyPrefixHint {
+            Text("Key 通常以 \(hint) 开头。").font(MovoFont.caption)
+                .foregroundStyle(MovoColor.muted)
+        }
+    }
+
+    // MARK: 自定义厂商字段（OpenAI 兼容）
+
+    /// 地址填了但不可用时的即时提示。裸 IP（如 203.0.113.10:21003/v1）最常忘记写 scheme。
+    private var baseURLHint: String? {
+        guard !env.customProvider.baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !env.customProvider.hasUsableBaseURL else { return nil }
+        return "地址要以 http:// 或 https:// 开头"
+    }
+
+    @ViewBuilder
+    private var customFields: some View {
+        MovoTextField("Base URL", text: baseURLBinding,
+                      placeholder: "https://your-server/v1",
+                      errorMessage: baseURLHint)
+            .identifierInputStyle()
+        MovoTextField("模型 ID", text: customModelBinding,
+                      placeholder: "your-model-id")
+            .identifierInputStyle()
+        // 把归一化后的真实端点显示出来：用户可以直接核对地址拼得对不对
+        if let endpoint = env.customProvider.chatCompletionsURL() {
+            Text("请求会发往 \(endpoint)。")
+                .font(MovoFont.caption).foregroundStyle(MovoColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        Text("按 OpenAI 兼容协议调用，鉴权头为 Authorization: Bearer <Key>。")
+            .font(MovoFont.caption).foregroundStyle(MovoColor.muted)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     private func save() {
@@ -165,11 +248,14 @@ struct AISettingsView: View {
 
     private func test() async {
         connectionState = .testing
+        // 自定义厂商的模型取自已写入环境的配置，这里只在内置厂商时显式传入选择值。
+        let testModel = (vendor == .deepseek && !model.isEmpty) ? model : nil
         do {
-            try await env.testConnection(vendor: vendor, model: model.isEmpty ? nil : model)
+            try await env.testConnection(vendor: vendor, model: testModel)
             connectionState = .success("连接正常。")
         } catch let error as MovoError {
-            connectionState = .failure("\(error.title)：\(error.message)")
+            // 这里没有待整理的原文，用 diagnosticDetail（可执行解释）而不是 message。
+            connectionState = .failure("\(error.title)：\(error.diagnosticDetail ?? error.message)")
         } catch {
             connectionState = .failure("连接没有成功，请检查网络后重试。")
         }

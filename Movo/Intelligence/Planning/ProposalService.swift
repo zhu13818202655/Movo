@@ -147,23 +147,19 @@ public struct ProposalService: Sendable {
         self.logger = logger
     }
 
-    /// 生产入口：按厂商装配适配器
+    /// 生产入口：按厂商装配适配器。自定义厂商未配置完整时抛 `MovoError.providerNotConfigured`。
     public static func make(vendor: AIVendor,
                             keyStore: any AIKeyStore,
                             catalog: ModelCatalog = ConfigLoader.loadModelCatalog(),
+                            custom: CustomProviderConfig = .empty,
                             defaults: AppDefaults = ConfigLoader.loadDefaults(),
                             model: String? = nil,
                             transport: AITransport? = nil,
-                            logger: RedactedLogger = RedactedLogger()) -> ProposalService {
-        let provider: any AIProvider
-        switch vendor {
-        case .openai:
-            provider = OpenAIAdapter(keyStore: keyStore, catalog: catalog,
-                                     defaults: defaults, model: model, transport: transport)
-        case .claude:
-            provider = ClaudeAdapter(keyStore: keyStore, catalog: catalog,
-                                     defaults: defaults, model: model, transport: transport)
-        }
+                            logger: RedactedLogger = RedactedLogger()) throws -> ProposalService {
+        let resolved = try AIProviderResolver.resolve(vendor: vendor, catalog: catalog,
+                                                      custom: custom, model: model)
+        let provider = OpenAICompatibleAdapter(resolved: resolved, keyStore: keyStore,
+                                               defaults: defaults, transport: transport)
         return ProposalService(provider: provider, defaults: defaults, logger: logger)
     }
 
