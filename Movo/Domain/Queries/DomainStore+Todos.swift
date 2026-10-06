@@ -35,7 +35,7 @@ public extension DomainStore {
         let all = await repository.allTasks()
         let index = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         let live = TaskHierarchy.ordered(all.filter { task in
-            guard !deleted.contains(task.id), task.status != .cancelled,
+            guard !task.isStep, !deleted.contains(task.id), task.status != .cancelled,
                   task.planId.map({ deleted.contains($0) || planIndex[$0]?.status == .archived }) != true
             else { return false }
             var cursor = task.parentId
@@ -61,14 +61,14 @@ public extension DomainStore {
             switch filter {
             case .all: dateMatches = true
             case .today:
-                dateMatches = !task.isTemplate && (task.scheduledDate.map { $0 <= today } == true
-                    || task.hardDeadline.map { $0.dateOnly <= today } == true
+                dateMatches = !task.isTemplate && (task.startAt.map { $0.dateOnly <= today } == true
+                    || task.endAt.map { $0.dateOnly <= today } == true
                     || task.status == .inProgress || task.status == .blocked
                     || task.doneAt.map { sameDay($0, today) } == true)
             case .upcoming:
-                dateMatches = task.scheduledDate.map { $0 > today } == true
-                    || task.hardDeadline.map { $0.dateOnly > today } == true
-            case .unscheduled: dateMatches = task.scheduledDate == nil && !task.isTemplate
+                dateMatches = task.startAt.map { $0.dateOnly > today } == true
+                    || task.endAt.map { $0.dateOnly > today } == true
+            case .unscheduled: dateMatches = task.startAt == nil && task.endAt == nil && !task.isTemplate
             }
             let matches = dateMatches && (includeCompleted || !complete)
             let nodes = kids.compactMap { build($0, visited: next) }

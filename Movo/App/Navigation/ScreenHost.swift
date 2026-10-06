@@ -17,7 +17,7 @@ public struct ScreenHost: View {
         switch route {
         // 顶部入口
         case .section(.today): TodayScreen()
-        case .section(.inbox): InboxScreen()
+        case .section(.inbox): OrganizeHistoryScreen()
         case .section(.plans): PlansScreen()
         case .section(.review): ReviewScreen()
         case .section(.search): SearchScreen()
@@ -57,6 +57,7 @@ public struct ScreenHost: View {
         case .settingsSection(let section): SettingsSectionScreen(section: section)
         case .recentlyDeleted: RecentlyDeletedScreen()
         case .exportPreview(let planID): ExportPreviewScreen(planID: planID)
+        case .importPlan: ImportPlanScreen()
         case .conflicts: ConflictResolutionScreen()
         }
     }

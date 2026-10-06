@@ -66,14 +66,14 @@ final class SwiftDataRepositoryTests: XCTestCase {
         XCTAssertTrue(after.isEmpty, "回滚后不应残留半更新")
     }
 
-    // MARK: - Task round-trip（AC02：安排日期与硬截止独立）
+    // MARK: - Task round-trip（起止时间独立）
 
-    func testTaskRoundTripPreservesScheduleAndDeadline() async throws {
+    func testTaskRoundTripPreservesStartAndEnd() async throws {
         let repo = try makeRepo()
         let scheduled = DateOnly(y: 2026, m: 9, d: 28, sourceTZ: tz.identifier)
         let deadline = DateTimeTZ(base, in: tz)
-        let task = Task(title: "体检", notes: "空腹前往", scheduledDate: scheduled,
-                        hardDeadline: deadline, estimateMinutes: 60,
+        let task = Task(title: "体检", notes: "空腹前往", startAt: .day(scheduled),
+                        endAt: .instant(deadline), estimateMinutes: 60,
                         priority: .high, tags: ["健康", "体检"])
 
         try await repo.upsert(task)
@@ -83,14 +83,13 @@ final class SwiftDataRepositoryTests: XCTestCase {
         let stored = try XCTUnwrap(loaded)
         XCTAssertEqual(stored.title, "体检")
         XCTAssertEqual(stored.notes, "空腹前往")
-        XCTAssertEqual(stored.scheduledDate, scheduled)
-        XCTAssertEqual(stored.hardDeadline?.epoch, deadline.epoch)
-        XCTAssertEqual(stored.hardDeadline?.tzID, tz.identifier)
+        XCTAssertEqual(stored.startAt, TimePoint.day(scheduled))
+        XCTAssertEqual(stored.endAt?.instantValue?.epoch, deadline.epoch)
+        XCTAssertEqual(stored.endAt?.instantValue?.tzID, tz.identifier)
         XCTAssertEqual(stored.estimateMinutes, 60)
         XCTAssertEqual(stored.priority, .high)
         XCTAssertEqual(stored.tags, ["健康", "体检"])
-        // 安排日期与硬截止可分辨（AC02）
-        XCTAssertNotNil(stored.scheduleVsDeadlineSummary)
+        XCTAssertNotNil(stored.timeRangeSummary)
     }
 
     // MARK: - 条件查询
@@ -98,10 +97,10 @@ final class SwiftDataRepositoryTests: XCTestCase {
     func testScheduledOnAndChildrenAndTemplates() async throws {
         let repo = try makeRepo()
         let day = DateOnly(y: 2026, m: 9, d: 28, sourceTZ: tz.identifier)
-        let parent = Task(title: "准备答辩", scheduledDate: day)
+        let parent = Task(title: "准备答辩", startAt: .day(day))
         let child = Task(parentId: parent.id, title: "打印讲稿")
         let template = Task(title: "晨跑", isTemplate: true)
-        let otherDay = Task(title: "下周的事", scheduledDate: day.adding(days: 7, in: tz))
+        let otherDay = Task(title: "下周的事", startAt: .day(day.adding(days: 7, in: tz)))
 
         for t in [parent, child, template, otherDay] { try await repo.upsert(t) }
         try await repo.commitTransaction()

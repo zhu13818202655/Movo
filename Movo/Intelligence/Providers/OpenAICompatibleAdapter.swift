@@ -49,7 +49,7 @@ public enum AIProposalCoding {
                 measurement: decodeMeasurement(object["measurement"]),
                 note: decodeNote(object["note"]),
                 confidence: object["confidence"]?.doubleValue ?? 0,
-                needsConfirmation: object["needs_confirmation"]?.boolValue ?? false,
+                needsConfirmation: object["needs_confirmation"]?.boolValue ?? true,
                 reason: object["reason"]?.stringValue,
                 clarificationQuestion: object["clarification_question"]?.stringValue))
         }
@@ -104,21 +104,62 @@ public enum AIProposalCoding {
         return values.compactMap { $0.stringValue }
     }
 
+    static func decodeStep(_ value: JSONValue?) -> AIProposalStep? {
+        guard case .object(let o)? = value,
+              let title = o["title"]?.stringValue,
+              !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        var nested: [AIProposalStep] = []
+        if let rawSteps = o["steps"] {
+            guard case .array(let values) = rawSteps else { return nil }
+            for v in values {
+                if let s = decodeStep(v) { nested.append(s) }
+            }
+        }
+        return AIProposalStep(ref: o["ref"]?.stringValue,
+                              parentRef: o["parent_ref"]?.stringValue,
+                              title: title,
+                              notes: o["notes"]?.stringValue,
+                              steps: nested)
+    }
+
+    static func decodeStage(_ value: JSONValue?) -> AIProposalStage? {
+        guard case .object(let o)? = value,
+              let name = o["name"]?.stringValue,
+              !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return AIProposalStage(ref: o["ref"]?.stringValue,
+                               name: name,
+                               startAt: o["start_at"]?.stringValue,
+                               endAt: o["end_at"]?.stringValue)
+    }
+
     static func decodeTask(_ value: JSONValue?) -> AIProposalTask? {
         guard case .object(let o)? = value else { return nil }
+        var steps: [AIProposalStep] = []
+        if let rawSteps = o["steps"] {
+            if case .array(let values) = rawSteps {
+                for v in values {
+                    if let s = decodeStep(v) { steps.append(s) }
+                }
+            }
+        }
         return AIProposalTask(
+            ref: o["ref"]?.stringValue,
             candidateTaskId: o["candidate_task_id"]?.stringValue,
             title: o["title"]?.stringValue,
             notes: o["notes"]?.stringValue,
             planId: o["plan_id"]?.stringValue,
             stageId: o["stage_id"]?.stringValue,
             parentTaskId: o["parent_task_id"]?.stringValue,
-            scheduledDate: o["scheduled_date"]?.stringValue,
-            hardDeadline: o["hard_deadline"]?.stringValue,
+            stageRef: o["stage_ref"]?.stringValue,
+            parentRef: o["parent_ref"]?.stringValue,
+            startAt: o["start_at"]?.stringValue,
+            endAt: o["end_at"]?.stringValue,
             estimateMinutes: intValue(o["estimate_minutes"]),
             priority: o["priority"]?.stringValue,
             tags: stringArray(o["tags"]),
-            dependencyIds: stringArray(o["dependency_ids"]))
+            dependencyIds: stringArray(o["dependency_ids"]),
+            recurrence: decodeRecurrence(o["recurrence"]),
+            steps: steps)
     }
 
     static func decodePlan(_ value: JSONValue?) -> AIProposalPlan? {
@@ -126,6 +167,14 @@ public enum AIProposalCoding {
               let name = object["name"]?.stringValue,
               let rawKind = object["kind"]?.stringValue,
               let kind = PlanKind(rawValue: rawKind) else { return nil }
+        var stages: [AIProposalStage] = []
+        if let rawStages = object["stages"] {
+            guard case .array(let values) = rawStages else { return nil }
+            for value in values {
+                guard let stage = decodeStage(value) else { return nil }
+                stages.append(stage)
+            }
+        }
         var tasks: [AIProposalTask] = []
         if let rawTasks = object["tasks"] {
             guard case .array(let values) = rawTasks else { return nil }
@@ -134,8 +183,11 @@ public enum AIProposalCoding {
                 tasks.append(task)
             }
         }
-        return AIProposalPlan(name: name, kind: kind, goal: object["goal"]?.stringValue,
-                              targetDate: object["target_date"]?.stringValue, tasks: tasks)
+        return AIProposalPlan(ref: object["ref"]?.stringValue,
+                              name: name, kind: kind, goal: object["goal"]?.stringValue,
+                              startAt: object["start_at"]?.stringValue,
+                              endAt: object["end_at"]?.stringValue,
+                              stages: stages, tasks: tasks)
     }
 
     static func decodeDateInterpretation(_ value: JSONValue?) -> AIDateInterpretation? {
@@ -143,8 +195,7 @@ public enum AIProposalCoding {
         return AIDateInterpretation(
             rawText: o["raw_text"]?.stringValue,
             resolvedDate: o["resolved_date"]?.stringValue,
-            granularity: o["granularity"]?.stringValue,
-            isHardDeadline: o["is_hard_deadline"]?.boolValue ?? false)
+            granularity: o["granularity"]?.stringValue)
     }
 
     static func decodeRecurrence(_ value: JSONValue?) -> AIRecurrence? {

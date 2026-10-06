@@ -78,48 +78,50 @@ public enum NotificationPlanner {
             guard task.status.isOpen else { continue }
             if let planID = task.planId, planIndex[planID]?.status == .archived { continue }
 
-            // 1. 硬截止：提前 N 天 + 截止当天各一次
-            if let deadline = task.hardDeadline {
-                let deadlineDay = deadline.dateOnly
-                if deadlineDay <= horizon, deadline.epoch > now {
-                    let leadDay = deadlineDay.adding(days: -config.hardDeadlineLeadDays)
+            // 重复模板的起止由规则的每天时刻决定，下面按实例单独提醒
+            guard !task.isTemplate else { continue }
+
+            // 1. 结束时间：提前 N 天 + 当天各一次（某一天与某一时刻都适用）
+            if let end = task.endAt {
+                let endDay = end.dateOnly
+                let notPast = end.instantValue.map { $0.epoch > now } ?? (endDay >= today)
+                if endDay <= horizon, notPast {
+                    let leadDay = endDay.adding(days: -config.hardDeadlineLeadDays)
                     if let lead = date(at: config.hardDeadlineSameDayHour,
                                        minute: config.hardDeadlineSameDayMinute,
                                        on: leadDay, in: timeZone), lead > now {
-                        out.append(planned(.hardDeadline, task: task, title: "还有 \(config.hardDeadlineLeadDays) 天到硬截止",
+                        out.append(planned(.hardDeadline, task: task, title: "还有 \(config.hardDeadlineLeadDays) 天到截止",
                                            body: task.title, fireDate: lead,
                                            identifier: "movo.deadline.\(task.id.uuidString).lead"))
                     }
                     if let sameDay = date(at: config.hardDeadlineSameDayHour,
                                           minute: config.hardDeadlineSameDayMinute,
-                                          on: deadlineDay, in: timeZone), sameDay > now {
+                                          on: endDay, in: timeZone), sameDay > now {
                         out.append(planned(.hardDeadline, task: task, title: "今天是最晚完成时间",
                                            body: task.title, fireDate: sameDay,
                                            identifier: "movo.deadline.\(task.id.uuidString).today"))
                     }
                 }
             }
-            // 2/3. 安排日期：具体时刻走"准时提醒"，仅日期走"当天默认时刻"
-            if let scheduled = task.scheduledDate, scheduled <= horizon, !task.isTemplate {
-                var handled = false
-                if let hint = task.timeHint, case .exact(let hour, let minute) = hint,
-                   let fire = date(at: hour, minute: minute, on: scheduled, in: timeZone) {
-                    let shifted = fire.addingTimeInterval(-Double(config.timedTaskLeadMinutes) * 60)
-                    if shifted > now {
-                        out.append(planned(.timedTask, task: task, title: "快到时间了",
-                                           body: "\(task.title) · \(scheduled.displayString)",
-                                           fireDate: shifted,
-                                           identifier: "movo.task.\(task.id.uuidString).timed"))
+            // 2/3. 开始时间：某一时刻走"准时提醒"，某一天走"当天默认时刻"
+            if let start = task.startAt {
+                let startDay = start.dateOnly
+                if startDay <= horizon {
+                    if let instant = start.instantValue {
+                        let shifted = instant.epoch.addingTimeInterval(-Double(config.timedTaskLeadMinutes) * 60)
+                        if shifted > now {
+                            out.append(planned(.timedTask, task: task, title: "快到时间了",
+                                               body: "\(task.title) · \(startDay.displayString)",
+                                               fireDate: shifted,
+                                               identifier: "movo.task.\(task.id.uuidString).timed"))
+                        }
+                    } else if let fire = date(at: config.dateOnlyTaskHour, minute: config.dateOnlyTaskMinute,
+                                              on: startDay, in: timeZone), fire > now {
+                        out.append(planned(.dateOnlyTask, task: task,
+                                           title: startDay.isSameDay(as: today) ? "今天安排" : startDay.displayStringWithWeekday,
+                                           body: task.title, fireDate: fire,
+                                           identifier: "movo.task.\(task.id.uuidString).day"))
                     }
-                    handled = true
-                }
-                if !handled,
-                   let fire = date(at: config.dateOnlyTaskHour, minute: config.dateOnlyTaskMinute,
-                                   on: scheduled, in: timeZone), fire > now {
-                    out.append(planned(.dateOnlyTask, task: task,
-                                       title: scheduled == today ? "今天安排" : scheduled.displayStringWithWeekday,
-                                       body: task.title, fireDate: fire,
-                                       identifier: "movo.task.\(task.id.uuidString).day"))
                 }
             }
 
@@ -135,6 +137,24 @@ public enum NotificationPlanner {
                                        identifier: "movo.blocked.\(task.id.uuidString)"))
                 }
             }
+        }
+
+        // 6. 重复实例：规则带每天开始时刻时，按「实例日期 + 时刻」准时提醒
+        let ruleByID = Dictionary(rules.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let taskByID = Dictionary(tasks.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        for occurrence in occurrences where occurrence.status == .pending {
+            guard let rule = ruleByID[occurrence.ruleId], rule.isActive, rule.dailyStart != nil,
+                  let day = occurrence.scheduledOn, day <= horizon,
+                  let task = taskByID[occurrence.taskId], task.status.isOpen,
+                  let range = RecurrencePolicy.timeRange(of: occurrence, rule: rule),
+                  let instant = range.start.instantValue else { continue }
+            if let planID = occurrence.planId, planIndex[planID]?.status == .archived { continue }
+            let fire = instant.epoch.addingTimeInterval(-Double(config.timedTaskLeadMinutes) * 60)
+            guard fire > now else { continue }
+            out.append(planned(.timedTask, task: task, title: "快到时间了",
+                               body: "\(task.title) · \(day.displayString)",
+                               fireDate: fire,
+                               identifier: "movo.occurrence.\(occurrence.id.uuidString).timed"))
         }
 
         // 4. 周期回顾

@@ -4,7 +4,7 @@
 //
 //  CreateTask / UpdateTask / ScheduleTask / SetDeadline / CompleteTask /
 //  ReopenTask / CancelTask / ReassignTask
-//  AC02：scheduledDate（哪天做）与 hardDeadline（最晚完成）分别编辑，不自动联动。
+//  起止时间：startAt / endAt 均可选，分别编辑，不自动联动。
 //
 
 import Foundation
@@ -15,11 +15,15 @@ public struct RecurrenceDraft: Sendable, Hashable {
     public var weeklyCount: Int?
     public var effectiveFrom: DateOnly
     public var effectiveUntil: DateOnly?
+    public var dailyStart: TimeOfDay?
+    public var dailyEnd: TimeOfDay?
 
     public init(pattern: RecurrencePattern, weekdays: [Int] = [], weeklyCount: Int? = nil,
-                effectiveFrom: DateOnly, effectiveUntil: DateOnly? = nil) {
+                effectiveFrom: DateOnly, effectiveUntil: DateOnly? = nil,
+                dailyStart: TimeOfDay? = nil, dailyEnd: TimeOfDay? = nil) {
         self.pattern = pattern; self.weekdays = weekdays; self.weeklyCount = weeklyCount
         self.effectiveFrom = effectiveFrom; self.effectiveUntil = effectiveUntil
+        self.dailyStart = dailyStart; self.dailyEnd = dailyEnd
     }
 }
 
@@ -34,9 +38,8 @@ public struct CreateTask: DomainCommand {
     public var stageID: UUID?
     public var parentID: UUID?
     public var notes: String?
-    public var scheduledDate: DateOnly?
-    public var deadline: DateTimeTZ?
-    public var timeHint: TimeOfDayHint?
+    public var startAt: TimePoint?
+    public var endAt: TimePoint?
     public var estimateMinutes: Int?
     public var priority: TaskPriority?
     public var tags: [String]
@@ -48,15 +51,15 @@ public struct CreateTask: DomainCommand {
 
     public init(operationID: UUID = UUID(), id: UUID = UUID(), title: String,
                 planID: UUID? = nil, stageID: UUID? = nil, parentID: UUID? = nil, notes: String? = nil,
-                scheduledDate: DateOnly? = nil, deadline: DateTimeTZ? = nil,
-                timeHint: TimeOfDayHint? = nil, estimateMinutes: Int? = nil,
+                startAt: TimePoint? = nil, endAt: TimePoint? = nil,
+                estimateMinutes: Int? = nil,
                 priority: TaskPriority? = nil, tags: [String] = [], dependencyIDs: [UUID] = [],
                 recurrence: RecurrenceDraft? = nil, source: SourceKind = .manual,
                 captureID: UUID? = nil, suggestedFields: [String] = []) {
         self.operationID = operationID; self.entityID = id
         self.title = title; self.planID = planID; self.stageID = stageID; self.parentID = parentID
-        self.notes = notes; self.scheduledDate = scheduledDate; self.deadline = deadline
-        self.timeHint = timeHint; self.estimateMinutes = estimateMinutes; self.priority = priority
+        self.notes = notes; self.startAt = startAt; self.endAt = endAt
+        self.estimateMinutes = estimateMinutes; self.priority = priority
         self.tags = tags; self.dependencyIDs = dependencyIDs
         self.recurrence = recurrence; self.source = source; self.captureID = captureID
         self.suggestedFields = suggestedFields
@@ -68,22 +71,39 @@ public struct CreateTask: DomainCommand {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         try await StructurePolicy.validateExplicitReassign(to: planID, repository: context.repository)
 
-        var task = Task(id: entityID, planId: planID, stageId: stageID, parentId: parentID,
-                        title: trimmed, notes: notes, isTemplate: recurrence != nil, status: .todo,
-                        scheduledDate: scheduledDate, hardDeadline: deadline, timeHint: timeHint,
+        // 挂在重复行动（或它的步骤）下的是步骤：继承所属计划、阶段，不带时间、依赖和重复频率
+        var isStep = false
+        var resolvedPlanID = planID
+        var resolvedStageID = stageID
+        if let parentID, let parent = await context.repository.task(parentID), parent.isTemplate {
+            guard recurrence == nil else {
+                throw MovoError.invalidStructure(reason: "步骤不能再设置重复频率。")
+            }
+            guard startAt == nil, endAt == nil, dependencyIDs.isEmpty else {
+                throw MovoError.invalidStructure(reason: "步骤不单独设置时间和前置任务。")
+            }
+            isStep = true
+            resolvedPlanID = parent.planId
+            resolvedStageID = parent.stageId
+        } else if parentID != nil, recurrence != nil {
+            throw MovoError.invalidStructure(reason: "重复行动不能放在其它待办下面。")
+        }
+
+        var task = Task(id: entityID, planId: resolvedPlanID, stageId: resolvedStageID, parentId: parentID,
+                        title: trimmed, notes: notes, isTemplate: recurrence != nil || isStep, status: .todo,
+                        startAt: startAt, endAt: endAt,
                         estimateMinutes: estimateMinutes, priority: priority, tags: tags,
                         dependencyIDs: dependencyIDs, source: source, sourceCaptureId: captureID,
                         suggestedFields: suggestedFields, createdAt: context.now, updatedAt: context.now)
         // 新任务的 revision 由写入路径统一自增
         task.revision = 1
-        // V6：硬截止必须含时刻 + 时区
-        try Self.validateDeadline(task.hardDeadline)
         for dep in dependencyIDs {
             try await StructurePolicy.validateDependency(taskID: task.id, dependsOn: dep,
                                                          repository: context.repository)
         }
         try await StructurePolicy.validateTaskStructure(task, repository: context.repository,
-                                                       requiresRecurrenceRule: recurrence == nil)
+                                                       requiresRecurrenceRule: recurrence == nil && !isStep)
+        try await StructurePolicy.validateTaskTime(task, old: nil, repository: context.repository)
 
         // C4：模板任务必须先有规则——先落任务再落规则，随后复校验
         let saved = try await context.write(task, old: nil)
@@ -93,12 +113,14 @@ public struct CreateTask: DomainCommand {
                                       weekdays: draft.pattern == .weekdays ? draft.weekdays : nil,
                                       weeklyCount: draft.pattern == .weeklyCount ? draft.weeklyCount : nil,
                                       effectiveFrom: max(draft.effectiveFrom, context.today),
-                                      effectiveUntil: draft.effectiveUntil)
+                                      effectiveUntil: draft.effectiveUntil,
+                                      dailyStart: draft.dailyStart, dailyEnd: draft.dailyEnd)
             rule.createdAt = context.now
             try StructurePolicy.validateRuleFields(rule)
+            try await StructurePolicy.validateRuleTime(rule, task: saved, repository: context.repository)
             _ = try await context.write(rule, old: nil)
             try await StructurePolicy.validateTaskStructure(saved, repository: context.repository)
-        } else if task.isTemplate {
+        } else if task.isTemplate && !task.isStep {
             throw MovoError.invalidStructure(reason: "重复行动必须带有重复频率。")
         }
 
@@ -106,17 +128,6 @@ public struct CreateTask: DomainCommand {
         return CommandResult(operationID: operationID, entityID: saved.id,
                              changedFields: context.changedFields,
                              userMessage: context.userMessage, newRevision: saved.revision)
-    }
-
-    /// V6：is_hard_deadline=false 时禁止写 hard_deadline；硬截止必须含时刻 + 时区
-    public static func validateDeadline(_ deadline: DateTimeTZ?) throws {
-        guard let deadline else { return }
-        guard TimeZone(identifier: deadline.tzID) != nil else {
-            throw MovoError.invalidStructure(reason: "硬截止需要带上时区。")
-        }
-        guard deadline.epoch.timeIntervalSince1970 > 0 else {
-            throw MovoError.invalidStructure(reason: "硬截止需要具体的日期与时刻。")
-        }
     }
 }
 
@@ -127,31 +138,31 @@ public struct TaskPatch: Sendable, Hashable {
     public var stageID: UUID?
     public var parentID: UUID?
     public var status: TaskStatus?
-    public var timeHint: TimeOfDayHint?
     public var estimateMinutes: Int?
     public var priority: TaskPriority?
     public var tags: [String]?
-    /// 安排日期（与硬截止分开，AC02）
-    public var scheduledDate: DateOnly?
+    /// 起止时间分别编辑，不自动联动
+    public var startAt: TimePoint?
+    public var endAt: TimePoint?
     public var clearNotes: Bool
     public var clearPriority: Bool
     public var clearEstimate: Bool
-    public var clearTimeHint: Bool
-    public var clearScheduledDate: Bool
+    public var clearStartAt: Bool
+    public var clearEndAt: Bool
 
     public init(title: String? = nil, notes: String? = nil, planID: UUID? = nil, stageID: UUID? = nil,
-                parentID: UUID? = nil, status: TaskStatus? = nil, timeHint: TimeOfDayHint? = nil,
+                parentID: UUID? = nil, status: TaskStatus? = nil,
                 estimateMinutes: Int? = nil, priority: TaskPriority? = nil, tags: [String]? = nil,
-                scheduledDate: DateOnly? = nil,
+                startAt: TimePoint? = nil, endAt: TimePoint? = nil,
                 clearNotes: Bool = false, clearPriority: Bool = false, clearEstimate: Bool = false,
-                clearTimeHint: Bool = false, clearScheduledDate: Bool = false) {
+                clearStartAt: Bool = false, clearEndAt: Bool = false) {
         self.title = title; self.notes = notes; self.planID = planID; self.stageID = stageID
-        self.parentID = parentID; self.status = status; self.timeHint = timeHint
+        self.parentID = parentID; self.status = status
         self.estimateMinutes = estimateMinutes; self.priority = priority; self.tags = tags
-        self.scheduledDate = scheduledDate
+        self.startAt = startAt; self.endAt = endAt
         self.clearNotes = clearNotes; self.clearPriority = clearPriority
-        self.clearEstimate = clearEstimate; self.clearTimeHint = clearTimeHint
-        self.clearScheduledDate = clearScheduledDate
+        self.clearEstimate = clearEstimate
+        self.clearStartAt = clearStartAt; self.clearEndAt = clearEndAt
     }
 
     public func apply(to task: Task) -> Task {
@@ -162,19 +173,19 @@ public struct TaskPatch: Sendable, Hashable {
         if let stageID { t.stageId = stageID }
         if let parentID { t.parentId = parentID }
         if let status { t.status = status }
-        if clearTimeHint { t.timeHint = nil } else if let timeHint { t.timeHint = timeHint }
         if clearEstimate { t.estimateMinutes = nil } else if let estimateMinutes { t.estimateMinutes = estimateMinutes }
         if clearPriority { t.priority = nil } else if let priority { t.priority = priority }
         if let tags { t.tags = tags }
-        if clearScheduledDate { t.scheduledDate = nil } else if let scheduledDate { t.scheduledDate = scheduledDate }
+        if clearStartAt { t.startAt = nil } else if let startAt { t.startAt = startAt }
+        if clearEndAt { t.endAt = nil } else if let endAt { t.endAt = endAt }
         return t
     }
 
     public var isEmpty: Bool {
         title == nil && notes == nil && planID == nil && stageID == nil && parentID == nil
-            && status == nil && timeHint == nil && estimateMinutes == nil && priority == nil
-            && tags == nil && scheduledDate == nil
-            && !clearNotes && !clearPriority && !clearEstimate && !clearTimeHint && !clearScheduledDate
+            && status == nil && estimateMinutes == nil && priority == nil
+            && tags == nil && startAt == nil && endAt == nil
+            && !clearNotes && !clearPriority && !clearEstimate && !clearStartAt && !clearEndAt
     }
 }
 
@@ -220,7 +231,8 @@ public struct UpdateTask: DomainCommand {
         if patch.status == .done || patch.status == .cancelled {
             let deleted = Set(await context.repository.tombstones(activeOnly: true).map(\.entityId))
             let children = await context.repository.children(of: taskID)
-            if children.contains(where: { !deleted.contains($0.id) && $0.status != .cancelled }) {
+            if !old.isTemplate,
+               children.contains(where: { !deleted.contains($0.id) && $0.status != .cancelled }) {
                 throw MovoError.invalidStructure(reason: "请逐项处理子任务；父任务进度会自动汇总。")
             }
         }
@@ -241,6 +253,7 @@ public struct UpdateTask: DomainCommand {
             }
         }
         try await StructurePolicy.validateTaskStructure(updated, repository: context.repository)
+        try await StructurePolicy.validateTaskTime(updated, old: baseline, repository: context.repository)
 
         let saved = try await context.write(updated, old: baseline)
         context.setUserMessage("已更新「\(saved.title)」")
@@ -250,7 +263,7 @@ public struct UpdateTask: DomainCommand {
     }
 }
 
-// MARK: - 安排日期（独立于硬截止，AC02）
+// MARK: - 开始时间（独立于结束时间）
 
 public struct ScheduleTask: DomainCommand {
     public let operationID: UUID
@@ -259,10 +272,11 @@ public struct ScheduleTask: DomainCommand {
     public var entityID: UUID { taskID }
     public let entityType: EntityType = .task
     public var baseRevision: Int
-    public var date: DateOnly?
+    public var startAt: TimePoint?
 
-    public init(operationID: UUID = UUID(), taskID: UUID, date: DateOnly?, baseRevision: Int = 0) {
-        self.operationID = operationID; self.taskID = taskID; self.date = date; self.baseRevision = baseRevision
+    public init(operationID: UUID = UUID(), taskID: UUID, startAt: TimePoint?, baseRevision: Int = 0) {
+        self.operationID = operationID; self.taskID = taskID; self.startAt = startAt
+        self.baseRevision = baseRevision
     }
 
     @MainActor
@@ -272,17 +286,18 @@ public struct ScheduleTask: DomainCommand {
         }
         try context.assertDeclaredRevision(actual: old.revision, entityID: taskID)
         var updated = old
-        updated.scheduledDate = date
+        updated.startAt = startAt
         updated.updatedAt = context.now
+        try await StructurePolicy.validateTaskTime(updated, old: old, repository: context.repository)
         let saved = try await context.write(updated, old: old)
-        context.setUserMessage(date.map { "已安排到 \($0.displayStringWithWeekday)" } ?? "已清除安排日期")
+        context.setUserMessage(startAt.map { "开始时间设为 \($0.displayString)" } ?? "已清除开始时间")
         return CommandResult(operationID: operationID, entityID: saved.id,
                              changedFields: context.changedFields,
                              userMessage: context.userMessage, newRevision: saved.revision)
     }
 }
 
-// MARK: - 硬截止（改截止走确认预览，PRD 10.2）
+// MARK: - 结束时间（改截止走确认预览，PRD 10.2）
 
 public struct SetDeadline: DomainCommand {
     public let operationID: UUID
@@ -291,12 +306,12 @@ public struct SetDeadline: DomainCommand {
     public var entityID: UUID { taskID }
     public let entityType: EntityType = .task
     public var baseRevision: Int
-    public var deadline: DateTimeTZ?
+    public var endAt: TimePoint?
     public var reason: String?
 
-    public init(operationID: UUID = UUID(), taskID: UUID, deadline: DateTimeTZ?,
+    public init(operationID: UUID = UUID(), taskID: UUID, endAt: TimePoint?,
                 baseRevision: Int = 0, reason: String? = nil) {
-        self.operationID = operationID; self.taskID = taskID; self.deadline = deadline
+        self.operationID = operationID; self.taskID = taskID; self.endAt = endAt
         self.baseRevision = baseRevision; self.reason = reason
     }
 
@@ -306,14 +321,14 @@ public struct SetDeadline: DomainCommand {
             throw MovoError.notFound(entityType: .task, id: taskID)
         }
         try context.assertDeclaredRevision(actual: old.revision, entityID: taskID)
-        try CreateTask.validateDeadline(deadline)
 
         var updated = old
-        updated.hardDeadline = deadline
+        updated.endAt = endAt
         updated.updatedAt = context.now
+        try await StructurePolicy.validateTaskTime(updated, old: old, repository: context.repository)
         context.setReason(reason)
         let saved = try await context.write(updated, old: old)
-        context.setUserMessage(deadline.map { "硬截止设为 \($0.displayString)" } ?? "已清除硬截止")
+        context.setUserMessage(endAt.map { "结束时间设为 \($0.displayString)" } ?? "已清除结束时间")
         return CommandResult(operationID: operationID, entityID: saved.id,
                              changedFields: context.changedFields,
                              userMessage: context.userMessage, newRevision: saved.revision)
@@ -350,9 +365,13 @@ public struct CompleteTask: DomainCommand {
             throw MovoError.invalidStructure(reason: "「\(old.title)」已经完成了。")
         }
 
+        guard !old.isStep else {
+            throw MovoError.invalidStructure(reason: "步骤要在重复行动的某一次里勾选。")
+        }
         let deleted = Set(await context.repository.tombstones(activeOnly: true).map(\.entityId))
         let children = await context.repository.children(of: taskID)
-        if children.contains(where: { !deleted.contains($0.id) && $0.status != .cancelled }) {
+        if !old.isTemplate,
+           children.contains(where: { !deleted.contains($0.id) && $0.status != .cancelled }) {
             throw MovoError.invalidStructure(reason: "这项待办的进度由子任务汇总，请完成具体子任务。")
         }
 
@@ -504,7 +523,8 @@ public struct CancelTask: DomainCommand {
         try await StructurePolicy.requireWritable(id: taskID, type: .task, repository: context.repository)
         let deleted = Set(await context.repository.tombstones(activeOnly: true).map(\.entityId))
         let children = await context.repository.children(of: taskID)
-        if children.contains(where: { !deleted.contains($0.id) && $0.status != .cancelled }) {
+        if !old.isTemplate,
+           children.contains(where: { !deleted.contains($0.id) && $0.status != .cancelled }) {
             throw MovoError.invalidStructure(reason: "请逐项取消子任务，或预览后删除整项待办。")
         }
         updated.cancelledAt = context.now
@@ -519,6 +539,22 @@ public struct CancelTask: DomainCommand {
         return CommandResult(operationID: operationID, entityID: saved.id,
                              changedFields: context.changedFields,
                              userMessage: context.userMessage, newRevision: saved.revision)
+    }
+}
+
+// MARK: - 旧版事件的时间字段
+
+/// 升级前记录的事件里，时间字段仍是 scheduledDate / hardDeadline / timeHint。
+/// 撤销这些事件时把旧字段改写成 startAt / endAt，否则恢复值会被忽略。
+enum LegacyTimeFields {
+    static func upgrade(_ values: inout [String: JSONValue]) {
+        if let old = values.removeValue(forKey: "scheduledDate") {
+            values["startAt"] = old.isNull ? JSONValue.null : JSONValue.object(["day": old])
+        }
+        if let old = values.removeValue(forKey: "hardDeadline") {
+            values["endAt"] = old.isNull ? JSONValue.null : JSONValue.object(["instant": old])
+        }
+        _ = values.removeValue(forKey: "timeHint")
     }
 }
 
@@ -583,6 +619,7 @@ public struct ReassignTask: DomainCommand {
                 context.addReleasedDependencies(task.dependencyIDs.count - updated.dependencyIDs.count)
             }
             try await StructurePolicy.validateTaskStructure(updated, repository: context.repository)
+            try await StructurePolicy.validateTaskTime(updated, old: task, repository: context.repository)
             updated.updatedAt = context.now
             _ = try await context.write(updated, old: task)
             // 实例沿用模板的新归属；历史行动记录保留发生时的计划。
@@ -618,6 +655,7 @@ public struct ReassignTask: DomainCommand {
             if event.entityType == .task, let old = await context.repository.task(event.entityId) {
                 var values = try JSONDiff.dictionary(old)
                 for (field, patch) in event.patch where field != "revision" { values[field] = patch.old }
+                LegacyTimeFields.upgrade(&values)
                 let decoder = JSONDecoder()
                 decoder.dateDecodingStrategy = .iso8601
                 var restored = try decoder.decode(Task.self, from: JSONEncoder().encode(values))

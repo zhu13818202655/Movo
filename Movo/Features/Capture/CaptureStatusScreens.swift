@@ -172,6 +172,8 @@ public struct CaptureResultScreen: View {
     @State private var rows: [AppliedRow] = []
     @State private var canUndo = false
     @State private var localError: String?
+    @State private var deselectedIDs: Set<String> = []
+    @State private var isCommitting = false
 
     public init(captureID: UUID, embedded: Bool = false) {
         self.captureID = captureID; self.embedded = embedded
@@ -213,19 +215,57 @@ public struct CaptureResultScreen: View {
                     }
                 }
                 if preparation.undoSummary == nil && !preparation.pendingProposals.isEmpty {
-                    SectionBlock("需要你确认") {
+                    SectionBlock("预览与确认", trailing: "\(activeSelectedCount) 项待写入") {
                         VStack(alignment: .leading, spacing: MovoSpace.m) {
                             ForEach(preparation.pendingProposals) { item in
-                                SuggestionCard(
-                                    title: item.affectedSummary,
-                                    reason: item.kind == .planCreation
-                                        ? "确认后建立计划及以下待办。云 AI 与同步许可保持关闭，可在计划设置中分别开启。"
-                                        : item.item.reason ?? item.kind.displayName,
-                                    lines: item.changeSummary, sourceText: item.item.sourceSpan,
-                                    primaryTitle: item.kind == .planCreation ? "确认并创建" : "确认应用",
-                                    onPrimary: {
-                                        _Concurrency.Task { await env.acceptPendingProposals([item], captureID: captureID) }
-                                    }, onDismiss: nil)
+                                let isCascadeDisabled = isAncestorDeselected(item, in: preparation.pendingProposals)
+                                let isSelected = !isCascadeDisabled && !deselectedIDs.contains(item.id)
+
+                                VStack(alignment: .leading, spacing: MovoSpace.s) {
+                                    HStack {
+                                        Toggle(isOn: Binding(
+                                            get: { isSelected },
+                                            set: { checked in
+                                                if isCascadeDisabled { return }
+                                                if checked {
+                                                    deselectedIDs.remove(item.id)
+                                                } else {
+                                                    deselectedIDs.insert(item.id)
+                                                }
+                                            })) {
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(item.affectedSummary).font(MovoFont.bodyEmphasis)
+                                                    .foregroundStyle(isCascadeDisabled ? MovoColor.muted : MovoColor.ink)
+                                                if isCascadeDisabled {
+                                                    Text("因上级项被取消而排除").font(MovoFont.caption).foregroundStyle(MovoColor.warning)
+                                                } else {
+                                                    Text(item.item.reason ?? item.kind.displayName).font(MovoFont.caption).foregroundStyle(MovoColor.muted)
+                                                }
+                                            }
+                                        }
+                                        .disabled(isCascadeDisabled)
+                                        .toggleStyle(.switch)
+                                    }
+
+                                    if !item.changeSummary.isEmpty {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            ForEach(item.changeSummary, id: \.entityId) { line in
+                                                HStack(alignment: .firstTextBaseline, spacing: MovoSpace.xs) {
+                                                    Text(line.title).font(MovoFont.captionEmphasis).foregroundStyle(MovoColor.muted)
+                                                    Text(line.changeText).font(MovoFont.caption).foregroundStyle(MovoColor.ink)
+                                                }
+                                            }
+                                        }
+                                        .padding(.leading, MovoSpace.m)
+                                    }
+                                }
+                                .padding(MovoSpace.s)
+                                .background(RoundedRectangle(cornerRadius: MovoRadius.card).fill(MovoColor.surface))
+                            }
+
+                            MovoButton("确认写入已选（\(activeSelectedCount) 项）", kind: .primary,
+                                       isEnabled: activeSelectedCount > 0 && !isCommitting) {
+                                _Concurrency.Task { await commitSelectedProposals() }
                             }
                         }.padding(MovoSpace.s)
                     }
@@ -244,17 +284,6 @@ public struct CaptureResultScreen: View {
                         }.padding(MovoSpace.s)
                     }
                 }
-                let local = preparation.localMatches.filter { !$0.kind.isDeterministic }
-                if !local.isEmpty {
-                    SectionBlock("留在本机，待处理") {
-                        ForEach(Array(local.enumerated()), id: \.offset) { entry in
-                            VStack(alignment: .leading, spacing: MovoSpace.xs) {
-                                Text(entry.element.sourceText)
-                                Text(entry.element.reason).font(MovoFont.caption).foregroundStyle(MovoColor.muted)
-                            }.padding(MovoSpace.s)
-                        }
-                    }
-                }
                 if !preparation.validated.corrections.isEmpty {
                     Text(preparation.validated.corrections.joined(separator: "\n"))
                         .font(MovoFont.caption).foregroundStyle(MovoColor.muted)
@@ -271,7 +300,7 @@ public struct CaptureResultScreen: View {
                     }
                     if preparation.isPartial {
                         MovoButton("编辑未完成内容", kind: .secondary) { recover(.editText) }
-                        MovoButton("稍后到收件箱处理", kind: .secondary) {
+                        MovoButton("查看整理记录", kind: .secondary) {
                             router.dismissSheet()
                             router.select(.inbox)
                         }
@@ -291,6 +320,36 @@ public struct CaptureResultScreen: View {
             await reload()
         }
         .task(id: env.store.dataVersion) { await reload() }
+    }
+
+    private var activeSelectedCount: Int {
+        guard let preparation else { return 0 }
+        return preparation.pendingProposals.filter { !isAncestorDeselected($0, in: preparation.pendingProposals) && !deselectedIDs.contains($0.id) }.count
+    }
+
+    private func isAncestorDeselected(_ item: PendingProposal, in items: [PendingProposal]) -> Bool {
+        if let pRef = item.item.task?.parentRef {
+            if items.contains(where: { ($0.item.task?.ref == pRef || $0.item.plan?.ref == pRef) && (deselectedIDs.contains($0.id) || isAncestorDeselected($0, in: items)) }) {
+                return true
+            }
+        }
+        if let sRef = item.item.task?.stageRef {
+            if items.contains(where: { ($0.item.plan?.stages.contains(where: { $0.ref == sRef }) ?? false) && (deselectedIDs.contains($0.id) || isAncestorDeselected($0, in: items)) }) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func commitSelectedProposals() async {
+        guard let preparation, !isCommitting else { return }
+        isCommitting = true
+        defer { isCommitting = false }
+        let selected = preparation.pendingProposals.filter {
+            !isAncestorDeselected($0, in: preparation.pendingProposals) && !deselectedIDs.contains($0.id)
+        }
+        await env.acceptPendingProposals(selected, captureID: captureID)
+        await reload()
     }
 
     @ViewBuilder
@@ -352,7 +411,7 @@ public struct CaptureResultScreen: View {
     private var remainingSourceText: String {
         guard let preparation else { return rawText }
         let applied = Set(preparation.appliedOperations.map(\.id))
-        var sources = preparation.localMatches.filter { !$0.kind.isDeterministic }.map(\.sourceText)
+        var sources: [String] = []
         sources += preparation.rejectedIssues.compactMap(\.sourceSpan)
         for item in preparation.proposal?.items ?? [] {
             let confirmed = CaptureCommand.stableID(captureID: captureID, key: "confirm|\(item.id)|0")
@@ -376,11 +435,11 @@ public struct CaptureResultScreen: View {
             var detail = ""
             if operation.entityType == .task, let task = await env.store.repository.task(operation.entityId) {
                 title = task.title
-                detail = task.scheduledDate.map { "安排 \($0.displayString)" } ?? "未安排"
+                detail = task.startAt.map { "开始 \($0.displayString)" } ?? "未安排"
                 if let planID = task.planId, let plan = await env.store.repository.plan(planID) {
                     detail += " · " + plan.name
                 } else { detail += " · 独立待办" }
-                if let deadline = task.hardDeadline { detail += " · 截止 \(deadline.dateOnly.displayString)" }
+                if let end = task.endAt { detail += " · 截止 \(end.displayString)" }
             } else if operation.entityType == .plan, let plan = await env.store.repository.plan(operation.entityId) {
                 title = plan.name; detail = plan.kind.displayName
             }

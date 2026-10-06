@@ -77,10 +77,10 @@ public final class TaskM {
     public var parentID: UUID?
     public var statusRaw: String
     public var isTemplate: Bool
-    /// DateOnly 存 `yyyy-MM-dd` + sourceTZ 两列（5.1）
+    /// 索引列：开始时间所在日期 `yyyy-MM-dd` + 开始时间的时区（列名沿用旧版，避免迁移）
     public var scheduledOnRaw: String?
     public var scheduledTZ: String?
-    /// DateTimeTZ 存 epoch + tzID
+    /// 索引列：结束时间为「某一时刻」时的 epoch + tzID
     public var deadlineEpoch: Date?
     public var deadlineTZ: String?
     public var updatedAt: Date

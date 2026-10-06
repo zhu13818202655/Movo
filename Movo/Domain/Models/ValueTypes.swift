@@ -192,18 +192,20 @@ public enum InputMode: String, Codable, Sendable, CaseIterable, Identifiable {
 
 /// Capture 处理状态：处理中断可恢复（REQ 02）
 public enum CaptureState: String, Codable, Sendable, CaseIterable, Identifiable {
-    case saved, processing, aiSucceeded, aiPartial, aiFailed
+    case saved, processing, pendingConfirmation, aiSucceeded, aiPartial, aiFailed, undone
     public var id: String { rawValue }
     public var displayName: String {
         switch self {
         case .saved: "已保存原文"
         case .processing: "整理中"
-        case .aiSucceeded: "已整理"
-        case .aiPartial: "部分整理"
+        case .pendingConfirmation: "待确认"
+        case .aiSucceeded: "已应用"
+        case .aiPartial: "已应用（部分）"
         case .aiFailed: "整理失败"
+        case .undone: "已撤销"
         }
     }
-    public var isTerminal: Bool { self == .aiSucceeded || self == .aiPartial || self == .aiFailed }
+    public var isTerminal: Bool { self == .aiSucceeded || self == .aiPartial || self == .aiFailed || self == .undone }
 }
 
 public enum AudioRetention: String, Codable, Sendable, CaseIterable, Identifiable {
@@ -402,11 +404,11 @@ public enum OperationKind: String, Codable, Sendable, CaseIterable, Identifiable
     case createPlan, updatePlan, pausePlan, resumePlan, deletePlan, restoreEntity
     case createStage, updateStage, createMetric, updateMetric
     case createTask, updateTask, deleteTask, scheduleTask, setDeadline, completeTask, reopenTask, cancelTask
-    case completeOccurrence, skipOccurrence
+    case completeOccurrence, skipOccurrence, toggleOccurrenceStep
     case logActivity, correctActivity
     case recordMeasurement, correctMeasurement
     case createRecurrence, changeRecurrence
-    case reassignTask
+    case reassignTask, convertSubtasksToSteps
     case addDependency, removeDependency
     case batchOperation
     case createNote
@@ -439,13 +441,14 @@ public enum OperationKind: String, Codable, Sendable, CaseIterable, Identifiable
         case .createTask: "新增任务"
         case .updateTask: "修改任务"
         case .deleteTask: "删除待办及子任务"
-        case .scheduleTask: "安排日期"
-        case .setDeadline: "设置硬截止"
+        case .scheduleTask: "设置开始时间"
+        case .setDeadline: "设置结束时间"
         case .completeTask: "完成任务"
         case .reopenTask: "重新打开"
         case .cancelTask: "取消任务"
         case .completeOccurrence: "完成本次"
         case .skipOccurrence: "跳过本次"
+        case .toggleOccurrenceStep: "勾选步骤"
         case .logActivity: "记录行动"
         case .correctActivity: "更正记录"
         case .recordMeasurement: "记录结果"
@@ -453,6 +456,7 @@ public enum OperationKind: String, Codable, Sendable, CaseIterable, Identifiable
         case .createRecurrence: "设置重复"
         case .changeRecurrence: "调整频率"
         case .reassignTask: "调整归属"
+        case .convertSubtasksToSteps: "子任务转为步骤"
         case .addDependency: "添加前置"
         case .removeDependency: "解除前置"
         case .batchOperation: "批量操作"
@@ -656,7 +660,7 @@ public enum TimeValue: Hashable, Sendable, Codable {
     }
 }
 
-/// 时段提示（如 morning/night/具体时刻）。仅展示，不产生通知。
+/// 旧版时段提示（morning/night/具体时刻）。字段已由 `startAt/endAt` 取代，仅用于读取旧数据。
 public enum TimeOfDayHint: Hashable, Sendable, Codable {
     case morning, noon, evening, night
     case exact(hour: Int, minute: Int)
@@ -683,6 +687,212 @@ public enum TimeOfDayHint: Hashable, Sendable, Codable {
     }
 
     public var producesNotification: Bool { false }
+}
+
+// MARK: - 起止时间点
+
+/// 一天内的时刻（到秒）。重复规则用它表示每次的开始与结束。
+public struct TimeOfDay: Hashable, Sendable, Codable {
+    public var hour: Int
+    public var minute: Int
+    public var second: Int
+
+    public init(hour: Int, minute: Int, second: Int = 0) {
+        self.hour = hour; self.minute = minute; self.second = second
+    }
+
+    public var isValid: Bool {
+        (0...23).contains(hour) && (0...59).contains(minute) && (0...59).contains(second)
+    }
+
+    public var secondsFromMidnight: Int { hour * 3600 + minute * 60 + second }
+
+    public var displayString: String {
+        second == 0 ? String(format: "%02d:%02d", hour, minute)
+                    : String(format: "%02d:%02d:%02d", hour, minute, second)
+    }
+}
+
+/// 起止时间点：某一天，或某一时刻。两者都不填表示「还没想好」，由字段本身为 nil 表达。
+public enum TimePoint: Hashable, Sendable, Codable {
+    case day(DateOnly)
+    case instant(DateTimeTZ)
+
+    private enum CodingKeys: String, CodingKey { case day, instant }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let value = try container.decodeIfPresent(DateOnly.self, forKey: .day) {
+            self = .day(value)
+        } else if let value = try container.decodeIfPresent(DateTimeTZ.self, forKey: .instant) {
+            self = .instant(value)
+        } else {
+            throw DecodingError.dataCorrupted(DecodingError.Context(
+                codingPath: decoder.codingPath, debugDescription: "时间点缺少 day 或 instant"))
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .day(let value): try container.encode(value, forKey: .day)
+        case .instant(let value): try container.encode(value, forKey: .instant)
+        }
+    }
+
+    public var isInstant: Bool {
+        if case .instant = self { return true }
+        return false
+    }
+
+    /// 所在日期（某一时刻按其自带时区取日期）
+    public var dateOnly: DateOnly {
+        switch self {
+        case .day(let value): value
+        case .instant(let value): value.dateOnly
+        }
+    }
+
+    public var instantValue: DateTimeTZ? {
+        if case .instant(let value) = self { return value }
+        return nil
+    }
+
+    public var tzID: String {
+        switch self {
+        case .day(let value): value.sourceTZ
+        case .instant(let value): value.tzID
+        }
+    }
+
+    public var timeZone: TimeZone { TimeZone(identifier: tzID) ?? .gmt }
+
+    /// 排序用的绝对时刻：某一天取当天 00:00
+    public var sortEpoch: Date {
+        switch self {
+        case .day(let value): value.startOfDay()
+        case .instant(let value): value.epoch
+        }
+    }
+
+    /// 比较粒度取较粗的一方：任一侧是「某一天」就只比日期，两侧都是时刻才比到秒。
+    public func coarseOrder(_ other: TimePoint) -> ComparisonResult {
+        if case .instant(let a) = self, case .instant(let b) = other {
+            if a.epoch < b.epoch { return .orderedAscending }
+            if a.epoch > b.epoch { return .orderedDescending }
+            return .orderedSame
+        }
+        let a = dateOnly, b = other.dateOnly
+        if a < b { return .orderedAscending }
+        if b < a { return .orderedDescending }
+        return .orderedSame
+    }
+
+    public func isEarlier(than other: TimePoint) -> Bool { coarseOrder(other) == .orderedAscending }
+    public func isLater(than other: TimePoint) -> Bool { coarseOrder(other) == .orderedDescending }
+
+    public var displayString: String {
+        switch self {
+        case .day(let value): value.displayString
+        case .instant(let value): value.displayString
+        }
+    }
+
+    /// 整体平移若干天：某一天按日历平移，某一时刻在其自带时区内按日历平移（跨夏令时保持钟点）
+    public func adding(days: Int) -> TimePoint {
+        switch self {
+        case .day(let value):
+            return .day(value.adding(days: days))
+        case .instant(let value):
+            var cal = Calendar(identifier: .gregorian)
+            cal.timeZone = value.timeZone
+            let moved = cal.date(byAdding: .day, value: days, to: value.epoch) ?? value.epoch
+            return .instant(DateTimeTZ(epoch: moved, tzID: value.tzID))
+        }
+    }
+
+    /// 只有「某一时刻」才有的时钟文本（HH:mm，按其自带时区）；某一天返回 nil
+    public var clockText: String? {
+        guard case .instant(let value) = self else { return nil }
+        let formatter = DateFormatter()
+        formatter.timeZone = value.timeZone
+        formatter.locale = Locale(identifier: "zh_Hans_CN")
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: value.epoch)
+    }
+
+    /// 当天内的排序值（秒）：某一天排在所有时刻之后
+    public var secondsOfDayForSorting: Int {
+        guard case .instant(let value) = self else { return 86_400 }
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = value.timeZone
+        let parts = cal.dateComponents([.hour, .minute, .second], from: value.epoch)
+        return (parts.hour ?? 0) * 3600 + (parts.minute ?? 0) * 60 + (parts.second ?? 0)
+    }
+
+    /// 日期用 yyyy-MM-dd，时刻用带时区的 ISO8601（AI 与导出共用）
+    public var iso8601String: String {
+        switch self {
+        case .day(let value): value.iso8601DateString
+        case .instant(let value): value.iso8601String
+        }
+    }
+
+    /// 在某天的指定时刻生成时间点（该时刻在当地不存在时返回 nil）
+    public static func makeInstant(on day: DateOnly, at time: TimeOfDay, in tz: TimeZone) -> TimePoint? {
+        var comps = DateComponents()
+        comps.year = day.y; comps.month = day.m; comps.day = day.d
+        comps.hour = time.hour; comps.minute = time.minute; comps.second = time.second
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = tz
+        guard let date = cal.date(from: comps) else { return nil }
+        return .instant(DateTimeTZ(date, in: tz))
+    }
+
+    /// 解析 yyyy-MM-dd（某一天）或 ISO8601（某一时刻；无时区偏移时按 `fallbackTZ`）
+    public static func parse(_ raw: String, fallbackTZ: TimeZone) -> TimePoint? {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        if !text.contains("T") {
+            guard let day = DateOnly(iso8601DateString: text, sourceTZ: fallbackTZ.identifier) else { return nil }
+            return .day(day)
+        }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        if let date = formatter.date(from: text) {
+            return .instant(DateTimeTZ(date, in: offsetZone(of: text) ?? fallbackTZ))
+        }
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: text) {
+            return .instant(DateTimeTZ(date, in: offsetZone(of: text) ?? fallbackTZ))
+        }
+        let local = DateFormatter()
+        local.locale = Locale(identifier: "en_US_POSIX")
+        local.timeZone = fallbackTZ
+        local.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        if let date = local.date(from: text) { return .instant(DateTimeTZ(date, in: fallbackTZ)) }
+        local.dateFormat = "yyyy-MM-dd'T'HH:mm"
+        if let date = local.date(from: text) { return .instant(DateTimeTZ(date, in: fallbackTZ)) }
+        return nil
+    }
+
+    /// 文本末尾的 `Z` 或 `±hh:mm` 偏移对应的固定时区
+    private static func offsetZone(of text: String) -> TimeZone? {
+        if text.hasSuffix("Z") { return TimeZone(secondsFromGMT: 0) }
+        guard text.count >= 6 else { return nil }
+        let tail = String(text.suffix(6))
+        guard let sign = tail.first, sign == "+" || sign == "-",
+              tail[tail.index(tail.startIndex, offsetBy: 3)] == ":",
+              let hours = Int(tail.dropFirst().prefix(2)),
+              let minutes = Int(tail.suffix(2)) else { return nil }
+        let seconds = (hours * 3600 + minutes * 60) * (sign == "-" ? -1 : 1)
+        return TimeZone(secondsFromGMT: seconds)
+    }
+}
+
+extension DateOnly {
+    /// 只比较年月日，不比较来源时区
+    public func isSameDay(as other: DateOnly) -> Bool { y == other.y && m == other.m && d == other.d }
 }
 
 // MARK: - 范围 / 过滤

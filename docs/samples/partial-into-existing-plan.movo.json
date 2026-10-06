@@ -1,0 +1,44 @@
+{
+    "_说明": "局部示例：没有 plans，只有阶段、指标、任务、测量值。导入时在『导入到』里选一个已有计划（日期范围需覆盖 2026-10-01 到 2026-12-31，例如先导入 full-plan.movo.json 里的计划）。没选计划时，阶段、指标、测量值会逐项报错，任务作为独立待办导入。",
+    "format": "movo.plan-file",
+    "schemaVersion": 1,
+    "stages": [
+        {
+            "id": "s-final",
+            "name": "模考周",
+            "startAt": "2026-12-16",
+            "endAt": "2026-12-31"
+        }
+    ],
+    "metrics": [
+        {
+            "id": "m-listen",
+            "name": "听力正确率",
+            "unit": "%",
+            "targetValue": 80,
+            "direction": "increase"
+        }
+    ],
+    "tasks": [
+        {
+            "title": "听力专项",
+            "stage": "模考周",
+            "endAt": "2026-12-20",
+            "children": [
+                {
+                    "title": "精听 3 篇"
+                },
+                {
+                    "title": "整理听力错题"
+                }
+            ]
+        }
+    ],
+    "measurements": [
+        {
+            "metric": "听力正确率",
+            "at": "2026-10-02",
+            "value": 62
+        }
+    ]
+}

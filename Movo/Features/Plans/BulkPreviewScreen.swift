@@ -160,9 +160,9 @@ public struct BulkPreviewScreen: View {
                 guard task.status.isOpen, !task.isTemplate else {
                     unaffected.append(task.title); continue
                 }
-                let from = task.scheduledDate?.displayString ?? "未安排"
+                let from = task.startAt?.displayString ?? "未安排"
                 lines.append(.init(entityId: task.id, title: task.title,
-                                   changeText: "安排日期 → \(tomorrow.displayString)",
+                                   changeText: "开始时间 → \(tomorrow.displayString)",
                                    oldValue: from, newValue: tomorrow.displayString))
             case .cancel:
                 guard task.status.isOpen else { unaffected.append(task.title); continue }
@@ -205,7 +205,7 @@ public struct BulkPreviewScreen: View {
         for task in tasks where affectedIDs.contains(task.id) {
             switch action {
             case .postponeOneDay:
-                commands.append(ScheduleTask(taskID: task.id, date: tomorrow,
+                commands.append(ScheduleTask(taskID: task.id, startAt: .day(tomorrow),
                                              baseRevision: task.revision))
             case .cancel:
                 commands.append(CancelTask(taskID: task.id, baseRevision: task.revision,

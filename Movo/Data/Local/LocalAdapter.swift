@@ -86,9 +86,9 @@ public enum LocalAdapter {
     public static func toM(_ task: Task) -> TaskM {
         TaskM(id: task.id, planID: task.planId, stageID: task.stageId, parentID: task.parentId,
               statusRaw: task.status.rawValue, isTemplate: task.isTemplate,
-              scheduledOnRaw: task.scheduledDate?.iso8601DateString,
-              scheduledTZ: task.scheduledDate?.sourceTZ,
-              deadlineEpoch: task.hardDeadline?.epoch, deadlineTZ: task.hardDeadline?.tzID,
+              scheduledOnRaw: task.startAt?.dateOnly.iso8601DateString,
+              scheduledTZ: task.startAt?.tzID,
+              deadlineEpoch: task.endAt?.instantValue?.epoch, deadlineTZ: task.endAt?.instantValue?.tzID,
               updatedAt: task.updatedAt, payload: encode(task))
     }
 

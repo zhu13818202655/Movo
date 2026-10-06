@@ -17,7 +17,7 @@ public enum AppSection: String, Hashable, Sendable, CaseIterable, Identifiable {
     public var title: String {
         switch self {
         case .today: "待办"
-        case .inbox: "收件箱"
+        case .inbox: "整理记录"
         case .plans: "计划"
         case .review: "回顾"
         case .search: "搜索"
@@ -27,7 +27,7 @@ public enum AppSection: String, Hashable, Sendable, CaseIterable, Identifiable {
     public var systemImage: String {
         switch self {
         case .today: "checklist"
-        case .inbox: "tray"
+        case .inbox: "sparkles.rectangle.stack"
         case .plans: "square.stack.3d.up"
         case .review: "chart.bar.doc.horizontal"
         case .search: "magnifyingglass"
@@ -80,6 +80,7 @@ public enum Route: Hashable, Identifiable, Sendable {
     case settingsSection(RecoveryAction.SettingsSection)
     case recentlyDeleted
     case exportPreview(planID: UUID?)
+    case importPlan
     case conflicts
 
     public var id: String {
@@ -109,6 +110,7 @@ public enum Route: Hashable, Identifiable, Sendable {
         case .settingsSection(let s): "settings-\(s.rawValue)"
         case .recentlyDeleted: "recently-deleted"
         case .exportPreview(let id): "export-\(id?.uuidString ?? "all")"
+        case .importPlan: "import-plan"
         case .conflicts: "conflicts"
         }
     }
@@ -117,7 +119,7 @@ public enum Route: Hashable, Identifiable, Sendable {
     public var artboardName: String {
         switch self {
         case .section(.today): "D01 / M01 待办"
-        case .section(.inbox): "D05 / M05 收件箱"
+        case .section(.inbox): "D05 / M05 AI 整理记录"
         case .section(.plans): "D06 / M07 我的计划"
         case .section(.review): "D08 / M10 回顾"
         case .section(.search): "D10 / M06-Search 搜索"
@@ -145,6 +147,7 @@ public enum Route: Hashable, Identifiable, Sendable {
         case .settingsSection: "D01-Settings / M13 分区"
         case .recentlyDeleted: "M13-Recovery 最近删除"
         case .exportPreview: "M13-Export 导出预览"
+        case .importPlan: "M13-Import 导入 Movo 文件"
         case .conflicts: "M13 同步冲突（02 States B 第 6 条）"
         }
     }

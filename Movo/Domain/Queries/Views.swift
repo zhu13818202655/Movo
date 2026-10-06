@@ -73,6 +73,28 @@ public enum PlanProgress: Hashable, Sendable {
     }
 }
 
+/// 阶段分段进度（交付型使用）
+public struct StageProgressSegment: Identifiable, Hashable, Sendable {
+    public var id: UUID
+    public var stageId: UUID?
+    public var name: String
+    public var done: Int
+    public var total: Int
+    public var status: StageStatus?
+
+    public init(id: UUID = UUID(), stageId: UUID? = nil, name: String, done: Int, total: Int, status: StageStatus? = nil) {
+        self.id = id; self.stageId = stageId; self.name = name; self.done = done; self.total = total; self.status = status
+    }
+
+    public var fraction: Double {
+        total == 0 ? 0 : min(max(Double(done) / Double(total), 0), 1)
+    }
+
+    public var displayText: String {
+        "\(name) · \(done)/\(total)"
+    }
+}
+
 /// 周期行动计数（改善型/持续型共用）
 public struct PeriodActions: Hashable, Sendable {
     public var done: Int
@@ -168,7 +190,7 @@ public struct TodayItem: Identifiable, Hashable, Sendable {
         case deadline(task: Task)
         /// 今天的 Occurrence
         case occurrence(occurrence: RecurrenceOccurrence, task: Task?)
-        /// scheduledDate = 今天
+        /// 开始日期是今天，或起止范围覆盖今天
         case scheduled(task: Task)
         /// 进行中的任务
         case inProgress(task: Task)
@@ -183,14 +205,27 @@ public struct TodayItem: Identifiable, Hashable, Sendable {
     public var section: TodaySection
     public var planName: String?
     public var dependency: DependencyState
-    public var timeHint: TimeOfDayHint?
+    /// 当天的起止（重复实例由规则每天的时刻生成）
+    public var startAt: TimePoint?
+    public var endAt: TimePoint?
     public var isCompletedToday: Bool
 
     public init(id: String, body: Body, section: TodaySection, planName: String? = nil,
-                dependency: DependencyState = .ready, timeHint: TimeOfDayHint? = nil,
+                dependency: DependencyState = .ready, startAt: TimePoint? = nil, endAt: TimePoint? = nil,
                 isCompletedToday: Bool = false) {
         self.id = id; self.body = body; self.section = section; self.planName = planName
-        self.dependency = dependency; self.timeHint = timeHint; self.isCompletedToday = isCompletedToday
+        self.dependency = dependency; self.startAt = startAt; self.endAt = endAt
+        self.isCompletedToday = isCompletedToday
+    }
+
+    /// 行内展示的时刻文本：只显示精确到时刻的那一端，例如 "08:00" 或 "08:00–09:00"
+    public var timeText: String? {
+        switch (startAt?.clockText, endAt?.clockText) {
+        case (let s?, let e?): return "\(s)–\(e)"
+        case (let s?, nil): return s
+        case (nil, let e?): return "\(e) 前"
+        case (nil, nil): return nil
+        }
     }
 
     public var taskId: UUID? {
@@ -529,6 +564,33 @@ public struct SnapshotMetric: Identifiable, Hashable, Sendable {
 
 // MARK: - 回顾
 
+/// 周内某天的行动记录统计（7 天分布）
+public struct DayActionStat: Identifiable, Hashable, Sendable {
+    public var id: DateOnly { date }
+    public var date: DateOnly
+    public var weekdayName: String
+    public var count: Int
+
+    public init(date: DateOnly, weekdayName: String, count: Int) {
+        self.date = date; self.weekdayName = weekdayName; self.count = count
+    }
+}
+
+/// 周内按计划分类（工作/学习/健康/生活/未分类）的投入占比
+public struct CategoryShareStat: Identifiable, Hashable, Sendable {
+    public var id: String { category?.rawValue ?? "none" }
+    public var category: PlanCategory?
+    public var displayName: String {
+        category?.displayName ?? "未分类"
+    }
+    public var count: Int
+    public var share: Double
+
+    public init(category: PlanCategory?, count: Int, share: Double) {
+        self.category = category; self.count = count; self.share = share
+    }
+}
+
 public struct ReviewView: Hashable, Sendable {
     public var weekStart: DateOnly
     public var weekRange: DateOnlyRange
@@ -539,16 +601,22 @@ public struct ReviewView: Hashable, Sendable {
     public var totalActionCount: Int
     public var cloudAIExcludedPlanNames: [String]
     public var cloudAIIncludedPlanNames: [String]
+    public var dailyActions: [DayActionStat]
+    public var categoryDistribution: [CategoryShareStat]
 
     public init(weekStart: DateOnly, weekRange: DateOnlyRange, facts: [ReviewFact] = [],
                 gaps: [ReviewGap] = [], suggestions: [Suggestion] = [], reviewNotes: [ReviewNote] = [],
                 totalActionCount: Int = 0, cloudAIExcludedPlanNames: [String] = [],
-                cloudAIIncludedPlanNames: [String] = []) {
+                cloudAIIncludedPlanNames: [String] = [],
+                dailyActions: [DayActionStat] = [],
+                categoryDistribution: [CategoryShareStat] = []) {
         self.weekStart = weekStart; self.weekRange = weekRange; self.facts = facts; self.gaps = gaps
         self.suggestions = suggestions; self.reviewNotes = reviewNotes
         self.totalActionCount = totalActionCount
         self.cloudAIExcludedPlanNames = cloudAIExcludedPlanNames
         self.cloudAIIncludedPlanNames = cloudAIIncludedPlanNames
+        self.dailyActions = dailyActions
+        self.categoryDistribution = categoryDistribution
     }
 
     public var rangeText: String {
@@ -623,6 +691,34 @@ public struct ReviewGap: Identifiable, Hashable, Sendable {
     /// 没有原因记录时显示"未记录原因"，不自动编造解释
     public static func noRecord(planId: UUID?, planName: String) -> ReviewGap {
         ReviewGap(planId: planId, planName: planName, message: "本周无记录")
+    }
+}
+
+// MARK: - AI 整理记录
+
+public struct OrganizeRecord: Identifiable, Hashable, Sendable {
+    public var id: UUID
+    public var rawText: String
+    public var summary: String
+    public var state: CaptureState
+    public var capturedAt: Date
+    public var batchID: UUID?
+    public var canPreview: Bool
+    public var canUndo: Bool
+    public var canRetry: Bool
+
+    public init(id: UUID, rawText: String, summary: String, state: CaptureState,
+                capturedAt: Date, batchID: UUID? = nil,
+                canPreview: Bool = false, canUndo: Bool = false, canRetry: Bool = false) {
+        self.id = id
+        self.rawText = rawText
+        self.summary = summary
+        self.state = state
+        self.capturedAt = capturedAt
+        self.batchID = batchID
+        self.canPreview = canPreview
+        self.canUndo = canUndo
+        self.canRetry = canRetry
     }
 }
 
@@ -824,5 +920,81 @@ public struct PlanArchive: Identifiable, Hashable, Sendable {
 
     public var summaryText: String {
         "\(leafTotal) 项任务 · 完成 \(leafDone) · \(actionRecordCount) 条行动记录 · \(measurementCount) 条结果"
+    }
+}
+
+// MARK: - 可视化与统计条目
+
+/// 重复行动单次实例的离散展示状态
+public struct OccurrenceStatusItem: Identifiable, Hashable, Sendable {
+    public enum State: String, Hashable, Sendable {
+        case done, skipped, unrecorded, pending
+
+        public var displayName: String {
+            switch self {
+            case .done: "已完成"
+            case .skipped: "已跳过"
+            case .unrecorded: "未记录"
+            case .pending: "待做"
+            }
+        }
+    }
+
+    public var id: UUID
+    public var date: DateOnly?
+    public var state: State
+    public var displayDateText: String
+
+    public init(id: UUID = UUID(), date: DateOnly?, state: State, displayDateText: String) {
+        self.id = id; self.date = date; self.state = state; self.displayDateText = displayDateText
+    }
+}
+
+/// 时间线跨度项（计划、阶段或任务）
+public struct TimelineSpanItem: Identifiable, Hashable, Sendable {
+    public enum Kind: String, Hashable, Sendable {
+        case plan, stage, task
+    }
+
+    public var id: UUID
+    public var kind: Kind
+    public var title: String
+    public var startAt: TimePoint?
+    public var endAt: TimePoint?
+    public var isCompleted: Bool
+    public var isOutRange: Bool
+    public var depth: Int
+    public var parentId: UUID?
+    public var stageId: UUID?
+
+    public init(id: UUID, kind: Kind, title: String, startAt: TimePoint?, endAt: TimePoint?,
+                isCompleted: Bool = false, isOutRange: Bool = false, depth: Int = 0,
+                parentId: UUID? = nil, stageId: UUID? = nil) {
+        self.id = id; self.kind = kind; self.title = title
+        self.startAt = startAt; self.endAt = endAt
+        self.isCompleted = isCompleted; self.isOutRange = isOutRange
+        self.depth = depth; self.parentId = parentId; self.stageId = stageId
+    }
+
+    public var startDateOnly: DateOnly? { startAt?.dateOnly }
+    public var endDateOnly: DateOnly? { endAt?.dateOnly }
+}
+
+public struct PlanTimelineView: Hashable, Sendable {
+    public var planId: UUID
+    public var planName: String
+    public var planStart: TimePoint?
+    public var planEnd: TimePoint?
+    public var spans: [TimelineSpanItem]
+    public var unscheduledTasks: [Task]
+    public var minDate: DateOnly?
+    public var maxDate: DateOnly?
+
+    public init(planId: UUID, planName: String, planStart: TimePoint?, planEnd: TimePoint?,
+                spans: [TimelineSpanItem] = [], unscheduledTasks: [Task] = [],
+                minDate: DateOnly? = nil, maxDate: DateOnly? = nil) {
+        self.planId = planId; self.planName = planName; self.planStart = planStart; self.planEnd = planEnd
+        self.spans = spans; self.unscheduledTasks = unscheduledTasks
+        self.minDate = minDate; self.maxDate = maxDate
     }
 }

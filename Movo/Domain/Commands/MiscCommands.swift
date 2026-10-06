@@ -23,15 +23,18 @@ public struct ProcessCapture: DomainCommand {
     public var segments: [SourceSpan]
     public var state: CaptureState
     public var batchID: UUID?
+    public var proposalJSON: String?
     public var audioRetention: AudioRetention
 
     public init(operationID: UUID = UUID(), id: UUID = UUID(), rawText: String,
                 editedText: String? = nil, inputMode: InputMode = .text,
                 segments: [SourceSpan] = [], state: CaptureState = .saved,
-                batchID: UUID? = nil, audioRetention: AudioRetention = .none) {
+                batchID: UUID? = nil, proposalJSON: String? = nil,
+                audioRetention: AudioRetention = .none) {
         self.operationID = operationID; self.entityID = id; self.rawText = rawText
         self.editedText = editedText; self.inputMode = inputMode; self.segments = segments
-        self.state = state; self.batchID = batchID; self.audioRetention = audioRetention
+        self.state = state; self.batchID = batchID; self.proposalJSON = proposalJSON
+        self.audioRetention = audioRetention
     }
 
     @MainActor
@@ -42,7 +45,8 @@ public struct ProcessCapture: DomainCommand {
         var capture = Capture(id: entityID, rawText: rawText, editedText: editedText,
                               inputMode: inputMode, capturedAt: context.now,
                               timezoneID: context.timeZone.identifier, state: state,
-                              batchId: batchID, segments: segments)
+                              batchId: batchID, segments: segments,
+                              proposalJSON: proposalJSON)
         capture.audioRetention = audioRetention
         if audioRetention == .retain24h {
             capture.audioExpiresAt = context.now.addingTimeInterval(
@@ -54,6 +58,7 @@ public struct ProcessCapture: DomainCommand {
             capture.capturedAt = existing.capturedAt
             capture.timezoneID = existing.timezoneID
             capture.audioExpiresAt = existing.audioExpiresAt
+            if capture.proposalJSON == nil { capture.proposalJSON = existing.proposalJSON }
         }
         let saved = try await context.write(capture, old: existing)
         context.setUserMessage("原文已保存。")

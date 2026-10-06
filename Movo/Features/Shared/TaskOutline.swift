@@ -138,9 +138,9 @@ struct TaskOutline: View {
         if let parentTitle { parts = ["上级：\(parentTitle)"] }
         #endif
         if node.hasChildren { parts.append("子任务 \(node.done)/\(node.total)") }
-        if let date = node.task.scheduledDate { parts.append("安排 \(date.displayString)") }
-        else if !node.task.isTemplate { parts.append("未安排") }
-        if let deadline = node.task.hardDeadline { parts.append("截止 \(deadline.dateOnly.displayString)") }
+        if let start = node.task.startAt { parts.append("开始 \(start.displayString)") }
+        else if node.task.endAt == nil, !node.task.isTemplate { parts.append("未安排") }
+        if let end = node.task.endAt { parts.append("截止 \(end.displayString)") }
         if node.isContext { parts.append("上级待办") }
         return parts.joined(separator: " · ")
     }

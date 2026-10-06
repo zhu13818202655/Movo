@@ -105,9 +105,9 @@ public actor InMemoryRepository: DomainRepository {
         tasks.values.filter { $0.parentId == parentID }.sorted { $0.createdAt < $1.createdAt }
     }
     public func tasks(scheduledOn day: DateOnly) async -> [Task] {
-        tasks.values.filter { $0.scheduledDate == day }
+        tasks.values.filter { $0.startAt?.dateOnly.isSameDay(as: day) == true }
     }
-    public func templateTasks() async -> [Task] { tasks.values.filter(\.isTemplate) }
+    public func templateTasks() async -> [Task] { tasks.values.filter { $0.isTemplate && !$0.isStep } }
     public func upsert(_ task: Task) async throws {
         if artificialWriteDelayNanoseconds > 0 {
             try? await _Concurrency.Task<Never, Never>.sleep(nanoseconds: artificialWriteDelayNanoseconds)

@@ -39,6 +39,17 @@ public struct PlanDetail: Hashable, Sendable {
     public var weekActions: PeriodActions
     public var occurrences: [OccurrenceSummary]
     public var ruleCount: Int
+    public var stageSegments: [StageProgressSegment]
+
+    public init(plan: Plan, progress: PlanProgress, stages: [Stage], currentStage: Stage?,
+                tree: PlanTreeView, metrics: [PlanMetric], trends: [MetricTrend],
+                weekActions: PeriodActions, occurrences: [OccurrenceSummary],
+                ruleCount: Int, stageSegments: [StageProgressSegment] = []) {
+        self.plan = plan; self.progress = progress; self.stages = stages
+        self.currentStage = currentStage; self.tree = tree; self.metrics = metrics
+        self.trends = trends; self.weekActions = weekActions; self.occurrences = occurrences
+        self.ruleCount = ruleCount; self.stageSegments = stageSegments
+    }
 }
 
 // MARK: - 任务详情
@@ -57,6 +68,20 @@ public struct TaskDetail: Hashable, Sendable {
     public var activities: [ActionRecord]
     public var notes: [Note]
     public var timeline: [TimelineEntry]
+    public var occurrenceStrip: [OccurrenceStatusItem]
+
+    public init(task: Task, plan: Plan?, stage: Stage?, parent: Task?,
+                children: [Task], dependency: DependencyState, blockerTitles: [String],
+                relationGraph: DependencyPolicy.RelationGraph, rule: RecurrenceRule?,
+                occurrences: [RecurrenceOccurrence], activities: [ActionRecord],
+                notes: [Note], timeline: [TimelineEntry],
+                occurrenceStrip: [OccurrenceStatusItem] = []) {
+        self.task = task; self.plan = plan; self.stage = stage; self.parent = parent
+        self.children = children; self.dependency = dependency; self.blockerTitles = blockerTitles
+        self.relationGraph = relationGraph; self.rule = rule; self.occurrences = occurrences
+        self.activities = activities; self.notes = notes; self.timeline = timeline
+        self.occurrenceStrip = occurrenceStrip
+    }
 }
 
 // MARK: - 历史条目（计划级）
@@ -117,10 +142,35 @@ public extension DomainStore {
                 doneThisWeek: fixed.done, plannedThisWeek: fixed.planned)
         }
 
+        var segments: [StageProgressSegment] = []
+        if plan.kind == .delivery {
+            for stage in stages {
+                let (done, total) = ProgressPolicy.stageRollup(stageID: stage.id, tasks: tasks)
+                if total > 0 {
+                    segments.append(StageProgressSegment(
+                        stageId: stage.id,
+                        name: stage.name,
+                        done: done,
+                        total: total,
+                        status: stage.status))
+                }
+            }
+            let unassignedTasks = tasks.filter { $0.stageId == nil }
+            let (unassignedDone, unassignedTotal) = ProgressPolicy.deliveryLeaves(in: unassignedTasks)
+            if unassignedTotal > 0 {
+                segments.append(StageProgressSegment(
+                    stageId: nil,
+                    name: stages.isEmpty ? "待办" : "其他任务",
+                    done: unassignedDone,
+                    total: unassignedTotal,
+                    status: nil))
+            }
+        }
+
         return PlanDetail(plan: plan, progress: progress, stages: stages,
                           currentStage: stages.first { $0.status == .inProgress || $0.status == .awaitingConfirm },
                           tree: tree, metrics: metrics, trends: trends, weekActions: weekActions,
-                          occurrences: summaries, ruleCount: rules.count)
+                          occurrences: summaries, ruleCount: rules.count, stageSegments: segments)
     }
 
     // MARK: 任务详情
@@ -136,7 +186,7 @@ public extension DomainStore {
         if let parentID = task.parentId { parent = await repository.task(parentID) }
         let deletedChildren = Set(await repository.tombstones(activeOnly: true).map(\.entityId))
         let children = TaskHierarchy.ordered(await repository.children(of: taskID).filter {
-            !deletedChildren.contains($0.id) && $0.status != .cancelled
+            !deletedChildren.contains($0.id) && $0.status != .cancelled && !$0.isStep
         })
         var siblings: [Task] = []
         if let planID = task.planId { siblings = await repository.tasks(planID: planID) }
@@ -154,10 +204,24 @@ public extension DomainStore {
         let notes = await repository.notes(planID: task.planId)
         let timeline = await timeline(entityID: taskID, title: task.title, entityType: .task)
 
+        let recentPrefix = Array(occurrences.prefix(30)).reversed()
+        let strip = recentPrefix.map { occ -> OccurrenceStatusItem in
+            let date = occ.displayDate(asOf: today)
+            let state: OccurrenceStatusItem.State
+            switch occ.status {
+            case .done: state = .done
+            case .skipped: state = .skipped
+            case .pending:
+                state = occ.isUnrecorded(asOf: today) ? .unrecorded : .pending
+            }
+            let dateText = date?.displayString ?? "未定日期"
+            return OccurrenceStatusItem(id: occ.id, date: date, state: state, displayDateText: dateText)
+        }
+
         return TaskDetail(task: task, plan: plan, stage: stage, parent: parent, children: children,
                           dependency: dependency, blockerTitles: blockers, relationGraph: graph,
                           rule: rule, occurrences: occurrences, activities: activities,
-                          notes: notes, timeline: timeline)
+                          notes: notes, timeline: timeline, occurrenceStrip: strip)
     }
 
     // MARK: 时间线
@@ -269,7 +333,7 @@ public extension DomainStore {
         }
 
         return PlanSnapshot(planId: planID, planName: plan.name, asOf: asOf,
-                            goalText: plan.goalText, targetDate: plan.targetDate,
+                            goalText: plan.goalText, targetDate: plan.endAt?.dateOnly,
                             leafDone: leaves.done, leafTotal: leaves.total,
                             stages: snapshotStages, metrics: snapshotMetrics,
                             restoredFromEventCount: eventCount)
@@ -326,19 +390,188 @@ public extension DomainStore {
                 skippedCount: period.skipped, unrecordedCount: period.unrecorded,
                 plannedCount: period.planned > 0 ? period.planned : nil,
                 metricChanges: trends, structuralEvents: structured,
-                isLocalOnly: !plan.cloudAIEnabled,
+                isLocalOnly: false,
                 sourceSummary: "来自这一周的行动记录与结果",
                 activityIDs: planActivities.map(\.id)))
         }
 
-        let included = facts.filter { !$0.isLocalOnly }.map(\.planName)
-        let excluded = facts.filter(\.isLocalOnly).map(\.planName)
+        let included = facts.map(\.planName)
+        let excluded: [String] = []
+
+        // 统计当周每日行动
+        let weekdayLabels = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+        var dailyActions: [DayActionStat] = []
+        let weekActivities = activities.filter { activity in
+            week.contains(DateOnly(from: activity.happenedAt.sortEpoch, in: currentTimeZone))
+        }
+        for offset in 0..<7 {
+            let day = start.adding(days: offset)
+            let count = weekActivities.filter {
+                DateOnly(from: $0.happenedAt.sortEpoch, in: currentTimeZone) == day
+            }.count
+            let labelIndex = max(0, min(6, day.isoWeekday - 1))
+            dailyActions.append(DayActionStat(date: day, weekdayName: weekdayLabels[labelIndex], count: count))
+        }
+
+        // 统计分类投入占比
+        var categoryCounts: [PlanCategory?: Int] = [:]
+        let planById = Dictionary(plans.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        for activity in weekActivities {
+            let cat = activity.planId.flatMap { planById[$0]?.category }
+            categoryCounts[cat, default: 0] += 1
+        }
+        let totalCount = weekActivities.count
+        var distribution: [CategoryShareStat] = []
+        let orderedCategories: [PlanCategory?] = [.work, .study, .health, .life, nil]
+        for cat in orderedCategories {
+            if let c = categoryCounts[cat], c > 0 {
+                let share = totalCount > 0 ? Double(c) / Double(totalCount) : 0
+                distribution.append(CategoryShareStat(category: cat, count: c, share: share))
+            }
+        }
 
         return ReviewView(weekStart: start, weekRange: week, facts: facts, gaps: gaps,
                           suggestions: suggestions, reviewNotes: notes,
                           totalActionCount: totalActions,
                           cloudAIExcludedPlanNames: excluded,
-                          cloudAIIncludedPlanNames: included)
+                          cloudAIIncludedPlanNames: included,
+                          dailyActions: dailyActions,
+                          categoryDistribution: distribution)
+    }
+
+    // MARK: - 时间线跨度视图
+
+    func planTimeline(_ planID: UUID) async -> PlanTimelineView? {
+        guard let plan = await repository.plan(planID) else { return nil }
+        let deleted = Set(await repository.tombstones(activeOnly: true).map(\.entityId))
+        let allTasks = await repository.tasks(planID: planID).filter { !deleted.contains($0.id) && !$0.isStep }
+        let stages = (await repository.stages(planID: planID)).sorted { $0.sortIndex < $1.sortIndex }
+
+        var spans: [TimelineSpanItem] = []
+        var unscheduled: [Task] = []
+
+        // 1. 计划自身
+        if plan.startAt != nil || plan.endAt != nil {
+            spans.append(TimelineSpanItem(
+                id: plan.id,
+                kind: .plan,
+                title: plan.name,
+                startAt: plan.startAt,
+                endAt: plan.endAt,
+                isCompleted: plan.status == .archived,
+                isOutRange: false,
+                depth: 0))
+        }
+
+        // 2. 阶段跨度
+        for stage in stages {
+            if stage.startAt != nil || stage.endAt != nil {
+                let out = StructurePolicy.withinViolation(
+                    startAt: stage.startAt, endAt: stage.endAt,
+                    parentStart: plan.startAt, parentEnd: plan.endAt,
+                    child: stage.name, parent: plan.name) != nil
+                spans.append(TimelineSpanItem(
+                    id: stage.id,
+                    kind: .stage,
+                    title: stage.name,
+                    startAt: stage.startAt,
+                    endAt: stage.endAt,
+                    isCompleted: stage.status == .achieved,
+                    isOutRange: out,
+                    depth: 1))
+            }
+        }
+
+        // 3. 任务跨度与未排期
+        let tasksById = Dictionary(allTasks.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        for task in allTasks {
+            if task.startAt == nil && task.endAt == nil {
+                unscheduled.append(task)
+            } else {
+                var depth = 1
+                if task.stageId != nil { depth = 2 }
+                var curr = task
+                while let pId = curr.parentId, let p = tasksById[pId] {
+                    depth += 1
+                    curr = p
+                }
+
+                let out = await StructurePolicy.timeRangeViolation(for: task, repository: repository) != nil
+
+                spans.append(TimelineSpanItem(
+                    id: task.id,
+                    kind: .task,
+                    title: task.title,
+                    startAt: task.startAt,
+                    endAt: task.endAt,
+                    isCompleted: task.status == .done,
+                    isOutRange: out,
+                    depth: depth,
+                    parentId: task.parentId,
+                    stageId: task.stageId))
+            }
+        }
+
+        // 计算 minDate 和 maxDate
+        var dates: [DateOnly] = []
+        for s in spans {
+            if let d = s.startDateOnly { dates.append(d) }
+            if let d = s.endDateOnly { dates.append(d) }
+        }
+        dates.append(today)
+        let minDate = dates.min()
+        let maxDate = dates.max()
+
+        return PlanTimelineView(
+            planId: plan.id,
+            planName: plan.name,
+            planStart: plan.startAt,
+            planEnd: plan.endAt,
+            spans: spans,
+            unscheduledTasks: unscheduled,
+            minDate: minDate,
+            maxDate: maxDate)
+    }
+    }
+
+    // MARK: - AI 整理记录
+
+    func organizeHistory() async -> [OrganizeRecord] {
+        let captures = await repository.allCaptures()
+        let allowedSteps = defaults.undoSteps > 0 ? defaults.undoSteps : 5
+        let recentBatches = (await repository.recentBatches(limit: 50)).filter { $0.state == .applied }
+        let eligibleBatchIDs = Set(recentBatches.prefix(allowedSteps).map(\.id))
+
+        var records: [OrganizeRecord] = []
+        for c in captures {
+            let batch = c.batchId != nil ? await repository.batch(c.batchId!) : nil
+            let hasApplied = batch?.state == .applied
+            let isUndone = batch?.state == .undone || c.state == .undone
+            let canUndo = c.batchId != nil && hasApplied && eligibleBatchIDs.contains(c.batchId!)
+            let canPreview = c.state == .pendingConfirmation || c.proposalJSON != nil
+            let canRetry = c.state == .aiFailed || c.state == .saved
+
+            var summary = c.state.displayName
+            if let batch, !batch.summary.isEmpty {
+                summary = batch.summary
+            } else if c.state == .aiFailed {
+                summary = "整理失败，可重试"
+            } else if c.state == .saved {
+                summary = "已保存原文"
+            }
+
+            records.append(OrganizeRecord(
+                id: c.id,
+                rawText: c.effectiveText,
+                summary: summary,
+                state: isUndone ? .undone : c.state,
+                capturedAt: c.capturedAt,
+                batchID: c.batchId,
+                canPreview: canPreview,
+                canUndo: canUndo,
+                canRetry: canRetry))
+        }
+        return records.sorted { $0.capturedAt > $1.capturedAt }
     }
 
     // MARK: 收件箱
@@ -398,7 +631,10 @@ public extension DomainStore {
         }
 
         // 中文 bigram + 拉丁词：AND 匹配（全部 token 命中）
+        // 重复行动的步骤不进入搜索
+        let stepIDs = Set(await repository.allTasks().filter(\.isStep).map(\.id))
         let matches = documents.filter { doc in
+            guard !stepIDs.contains(doc.entityId) else { return false }
             let haystack = Set(doc.tokens)
             return tokens.allSatisfy { haystack.contains($0) }
         }
@@ -531,10 +767,14 @@ public extension DomainStore {
             }
         }
         if event.patch["value"] != nil, entityType == .measurement { return .measurementCorrected }
-        if event.patch["scheduledDate"] != nil || event.patch["hardDeadline"] != nil { return .adjustment }
+        // 旧版事件里的字段名也要认得
+        let timeKeys = ["startAt", "endAt", "scheduledDate", "hardDeadline", "targetDate"]
+        if timeKeys.contains(where: { event.patch[$0] != nil }) {
+            return entityType == .task ? .adjustment : .goalChanged
+        }
         if event.patch["pattern"] != nil || event.patch["weeklyCount"] != nil
             || event.patch["weekdays"] != nil { return .recurrenceChanged }
-        if event.patch["goalText"] != nil || event.patch["targetDate"] != nil { return .goalChanged }
+        if event.patch["goalText"] != nil { return .goalChanged }
         switch entityType {
         case .activity: return .record
         case .note, .capture: return .created

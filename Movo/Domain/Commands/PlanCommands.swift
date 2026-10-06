@@ -14,7 +14,10 @@ public struct PlanPatch: Sendable, Hashable {
     public var kind: PlanKind?
     public var category: PlanCategory?
     public var goalText: String?
-    public var targetDate: DateOnly?
+    public var startAt: TimePoint?
+    public var endAt: TimePoint?
+    public var clearStartAt: Bool
+    public var clearEndAt: Bool
     public var aliases: [String]?
     public var contextPhrases: [String]?
     public var excludedTerms: [String]?
@@ -24,12 +27,14 @@ public struct PlanPatch: Sendable, Hashable {
     public var sortIndex: Int?
 
     public init(name: String? = nil, kind: PlanKind? = nil, category: PlanCategory? = nil,
-                goalText: String? = nil, targetDate: DateOnly? = nil, aliases: [String]? = nil,
+                goalText: String? = nil, startAt: TimePoint? = nil, endAt: TimePoint? = nil,
+                clearStartAt: Bool = false, clearEndAt: Bool = false, aliases: [String]? = nil,
                 contextPhrases: [String]? = nil, excludedTerms: [String]? = nil,
                 cloudAIEnabled: Bool? = nil, syncEnabled: Bool? = nil,
                 status: PlanStatus? = nil, sortIndex: Int? = nil) {
         self.name = name; self.kind = kind; self.category = category
-        self.goalText = goalText; self.targetDate = targetDate
+        self.goalText = goalText; self.startAt = startAt; self.endAt = endAt
+        self.clearStartAt = clearStartAt; self.clearEndAt = clearEndAt
         self.aliases = aliases; self.contextPhrases = contextPhrases; self.excludedTerms = excludedTerms
         self.cloudAIEnabled = cloudAIEnabled; self.syncEnabled = syncEnabled
         self.status = status; self.sortIndex = sortIndex
@@ -41,7 +46,8 @@ public struct PlanPatch: Sendable, Hashable {
         if let kind { p.kind = kind }
         if let category { p.category = category }
         if let goalText { p.goalText = goalText }
-        if let targetDate { p.targetDate = targetDate }
+        if clearStartAt { p.startAt = nil } else if let startAt { p.startAt = startAt }
+        if clearEndAt { p.endAt = nil } else if let endAt { p.endAt = endAt }
         if let aliases { p.aliases = aliases }
         if let contextPhrases { p.contextPhrases = contextPhrases }
         if let excludedTerms { p.excludedTerms = excludedTerms }
@@ -53,7 +59,8 @@ public struct PlanPatch: Sendable, Hashable {
     }
 
     public var isEmpty: Bool {
-        name == nil && kind == nil && category == nil && goalText == nil && targetDate == nil
+        name == nil && kind == nil && category == nil && goalText == nil
+            && startAt == nil && endAt == nil && !clearStartAt && !clearEndAt
             && aliases == nil && contextPhrases == nil && excludedTerms == nil
             && cloudAIEnabled == nil && syncEnabled == nil && status == nil && sortIndex == nil
     }
@@ -67,9 +74,12 @@ public struct StageDraft: Sendable, Hashable {
     public var id: UUID
     public var name: String
     public var criteriaText: String?
-    public var targetDate: DateOnly?
-    public init(id: UUID = UUID(), name: String, criteriaText: String? = nil, targetDate: DateOnly? = nil) {
-        self.id = id; self.name = name; self.criteriaText = criteriaText; self.targetDate = targetDate
+    public var startAt: TimePoint?
+    public var endAt: TimePoint?
+    public init(id: UUID = UUID(), name: String, criteriaText: String? = nil,
+                startAt: TimePoint? = nil, endAt: TimePoint? = nil) {
+        self.id = id; self.name = name; self.criteriaText = criteriaText
+        self.startAt = startAt; self.endAt = endAt
     }
 }
 
@@ -99,7 +109,8 @@ public struct CreatePlan: DomainCommand {
     public var planKind: PlanKind
     public var category: PlanCategory?
     public var goal: String?
-    public var targetDate: DateOnly?
+    public var startAt: TimePoint?
+    public var endAt: TimePoint?
     public var stages: [StageDraft]
     public var metrics: [MetricDraft]
     public var aliases: [String]
@@ -108,12 +119,13 @@ public struct CreatePlan: DomainCommand {
     public var syncEnabled: Bool
 
     public init(operationID: UUID = UUID(), id: UUID = UUID(), name: String, kind: PlanKind,
-                category: PlanCategory? = nil, goal: String? = nil, targetDate: DateOnly? = nil,
+                category: PlanCategory? = nil, goal: String? = nil,
+                startAt: TimePoint? = nil, endAt: TimePoint? = nil,
                 stages: [StageDraft] = [], metrics: [MetricDraft] = [],
                 aliases: [String] = [], contextPhrases: [String] = [],
                 cloudAIEnabled: Bool? = nil, syncEnabled: Bool = true) {
         self.operationID = operationID; self.entityID = id; self.name = name; self.planKind = kind
-        self.category = category; self.goal = goal; self.targetDate = targetDate
+        self.category = category; self.goal = goal; self.startAt = startAt; self.endAt = endAt
         self.stages = stages; self.metrics = metrics; self.aliases = aliases
         self.contextPhrases = contextPhrases; self.cloudAIEnabled = cloudAIEnabled
         self.syncEnabled = syncEnabled
@@ -124,17 +136,20 @@ public struct CreatePlan: DomainCommand {
         try StructurePolicy.validatePlanName(name)
 
         let plan = Plan(id: entityID, name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-                        kind: planKind, category: category, goalText: goal, targetDate: targetDate,
+                        kind: planKind, category: category, goalText: goal,
+                        startAt: startAt, endAt: endAt,
                         aliases: aliases, contextPhrases: contextPhrases,
                         cloudAIEnabled: cloudAIEnabled, syncEnabled: syncEnabled,
                         status: .active, createdAt: context.now, updatedAt: context.now)
+        try await StructurePolicy.validatePlanTime(plan, old: nil, repository: context.repository)
         let saved = try await context.write(plan, old: nil)
 
         var created = 1
         for (index, draft) in stages.enumerated() {
             var stage = Stage(planId: saved.id, name: draft.name, criteriaText: draft.criteriaText,
-                              targetDate: draft.targetDate, sortIndex: index)
+                              startAt: draft.startAt, endAt: draft.endAt, sortIndex: index)
             stage.id = draft.id
+            try await StructurePolicy.validateStageTime(stage, old: nil, repository: context.repository)
             _ = try await context.write(stage, old: nil)
             created += 1
         }
@@ -186,8 +201,9 @@ public struct UpdatePlan: DomainCommand {
 
         var updated = patch.apply(to: old)
         updated.updatedAt = context.now
-        // 目标日期变更 → 记目标修改事件
-        if patch.targetDate != nil, patch.targetDate != old.targetDate {
+        try await StructurePolicy.validatePlanTime(updated, old: old, repository: context.repository)
+        // 起止时间变更 → 记调整事件
+        if updated.startAt != old.startAt || updated.endAt != old.endAt {
             context.setReason(reason)
         }
         let saved = try await context.write(updated, old: old)

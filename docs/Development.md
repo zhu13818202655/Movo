@@ -2,7 +2,7 @@
 
 > 读者假设：熟悉 Python / Go，不熟悉 Swift 与 Apple 工程体系。
 > 本文只回答两个问题：**代码在哪**、**怎么构建 / 运行 / 调试**。
-> 需求文档见 `PRD.md`，实施方案见 `代码实施方案-V2.md`，视觉稿见 `design/Movo.pen` + `UI-Prompt.md`。
+> 需求文档见 `PRD.md`，视觉稿见 `design/Movo.pen` + `UI-Prompt.md`。
 
 ---
 
@@ -10,7 +10,7 @@
 
 ### 添加与 AI 整理排障
 
-当前待办页的手动入口位于筛选下面；Mac 顶部与 iPhone 底部 AI 按钮均进入统一整理流程。设计依据见 [本轮设计变更](design/添加与AI整理-设计变更.md)。
+当前待办页的手动入口位于筛选下面；Mac 顶部与 iPhone 底部 AI 按钮均进入统一整理流程。完整流程见 [AI 构建待办流程](AI-Todo-Pipeline.md)。
 
 “提交完成但没有看到创建”应区分以下情况：
 
@@ -29,7 +29,7 @@
 
 | 项 | 值 |
 |---|---|
-| 产品 | 个人待办 + 长期目标管理。一句话输入 → AI 整理成计划/任务 → 长期跟踪；健康类敏感内容本地隔离 |
+| 产品 | 个人待办 + 长期目标管理。一句话输入 → AI 整理成计划/任务 → 预览确认后写入 → 长期跟踪；全局 AI 开关与最近 5 步撤销 |
 | 形态 | **单工程双端**：同一份 Swift 代码编译出 iOS 与 macOS 两个 App |
 | 语言 | Swift 6，`SWIFT_STRICT_CONCURRENCY=complete`，`SWIFT_TREAT_WARNINGS_AS_ERRORS=YES` |
 | UI | SwiftUI（声明式，类似 Flutter，无 Storyboard / XIB） |
@@ -57,10 +57,10 @@
 ├── Movo/                      ← 全部源码（下文展开）
 ├── Tests/                     ← 单元测试，5 个 target，独立于 Movo/ 之外
 ├── Scripts/verify.sh          ← 一键构建 + 全量测试脚本
-├── docs/                      ← PRD、实施方案、开发概述、设计稿
+├── docs/                      ← PRD、开发概述、设计稿
 │   ├── PRD.md
+│   ├── AI-Todo-Pipeline.md    ← AI 构建待办流程
 │   ├── UI-Prompt.md
-│   ├── 代码实施方案-V2.md
 │   ├── Development.md         ← 本文
 │   └── design/Movo.pen        ← 设计稿（Pencil 格式），画板编号 D01–D10 / M01–M14
 └── .build/                    ← 构建产物（可随时删除）
@@ -127,7 +127,7 @@ Movo/
 ├── Data/                             数据层：实现 Domain 的仓储协议
 │   ├── Local/                        SwiftData 落盘、@Model 映射、领域↔存储转换
 │   ├── Sync/                          CloudKit 同步（默认关闭）
-│   └── Export/                       导出 Markdown / JSON
+│   └── Export/                       导出 Markdown / `.movo.json`，导入 `.movo.json`（见 docs/PlanFile.md）
 │
 ├── Intelligence/                     智能层：AI 调用 + 隐私 + 语音
 │   ├── Providers/                    厂商适配（内置 DeepSeek + 自定义 OpenAI 兼容）、Keychain、超时重试
@@ -140,9 +140,8 @@ Movo/
 ├── DesignSystem/                     设计令牌 + 通用组件（按钮/行/图表）
 │   └── Components/
 ├── Config/                           运行时 JSON 配置（作为资源打进 MovoKit）
-│   ├── Defaults.json                 通知时刻、AI 阈值、超时等易变参数
-│   ├── ModelsCatalog.json            内置厂商的 chat completions 端点与模型清单
-│   └── HealthKeywords.json           健康敏感词表（命中即走本地，不上云）
+│   ├── Defaults.json                 通知时刻、回退步数、超时等易变参数
+│   └── ModelsCatalog.json            内置厂商的 chat completions 端点与模型清单
 │
 ├── ── Movo（application，UI 与装配）─────────────────────────
 ├── App/                              应用装配与外壳
@@ -208,7 +207,7 @@ Movo/
 | 文件 | 职责 |
 |---|---|
 | `Domain/Models/Entities.swift` | 全部实体字段定义（Plan / Task / Occurrence / Metric / …），均为值类型 |
-| `Domain/Models/ValueTypes.swift` | `DateOnly` 与 `DateTimeTZ` 是**两种独立类型**；「哪天做」与「最晚何时完成」不可混用裸 `Date` |
+| `Domain/Models/ValueTypes.swift` | `DateOnly` 与 `DateTimeTZ` 是**两种独立类型**，`TimePoint` 把它们联合成「某一天 / 某一时刻」，作为计划、阶段、任务的 `startAt` / `endAt`；不要用裸 `Date` 表示某天 |
 | `Domain/Commands/DomainStore.swift` | **唯一写入者**。`@MainActor` 隔离，所有写操作经此排队 |
 | `Domain/Commands/TaskCommands.swift` | 任务增删改：`CreateTask` / `ScheduleTask` / `SetDeadline` / `CompleteTask` / … |
 | `Domain/Commands/PlanCommands.swift` | 计划增删改 + 暂停/恢复/删除/恢复实体 |
@@ -242,7 +241,10 @@ Movo/
 | `Data/Sync/FieldMerge.swift` | 字段级三方合并算法（纯函数） | |
 | `Data/Sync/SyncEntityBox.swift` | 同步实体编解码盒子 | |
 | `Data/Sync/TombstoneSync.swift` | 删除墓碑与 30 天内恢复 | |
-| `Data/Export/ExportService.swift` | 导出 Markdown / JSON；敏感计划默认排除 | |
+| `Data/Export/ExportService.swift` | 导出 Markdown / Movo 文件；范围含计划与独立待办，记录 / 测量值 / 笔记由 `PlanFileOptions` 显式勾选，不再按 `cloudAIEnabled` 过滤 | |
+| `Data/Export/PlanFile.swift` | `.movo.json` 结构、编解码与版本检查、导出构造、带说明的空模板 | |
+| `Data/Export/PlanFileImport.swift` | 导入：解析 → 命令 → 临时 `InMemoryRepository` 预演 → 预览 → 一个批次写入；稳定 id 映射用于识别重复导入 | |
+| `Domain/Policies/RecurrenceStepPolicy.swift` | 重复行动的步骤：快照、叶子进度、上级步骤汇总 | |
 
 ### 1.8 Intelligence：AI 与隐私
 
@@ -253,15 +255,12 @@ Movo/
 | `Intelligence/Providers/OpenAICompatibleAdapter.swift` | Chat Completions + `json_object` 结构化输出（内置与自定义厂商共用） | **[大模型]** |
 | `Intelligence/Providers/AIProviderResolver.swift` | 把厂商与配置解析为端点/模型；自定义厂商未配全时抛 `providerNotConfigured` | **[大模型]** |
 | `Intelligence/Providers/AISettingsStore.swift` | 厂商选择与自定义 Base URL／模型 ID 的本机持久化 | **[大模型]** |
-| `Intelligence/Providers/AITransport.swift` | 超时（连接 10s / 总 30s）、重试、取消 | **[大模型]** |
-| `Intelligence/Planning/ProposalService.swift` | 主流水线 C2→C7 | **[大模型]** |
+| `Intelligence/Providers/AITransport.swift` | 超时（单次等待 60s / 总 120s）、重试、取消 | **[大模型]** |
+| `Intelligence/Planning/ProposalService.swift` | 主流水线 C2→C7：原文原样发送，先预览后落盘 | **[大模型]** |
 | `Intelligence/Planning/AIProposal.swift` | 模型输出契约（JSON Schema） | |
-| `Intelligence/Planning/ProposalValidator.swift` | 校验清单：**校验未过绝不猜**，进收件箱 | |
-| `Intelligence/Planning/ExecutionPolicy.swift` | 执行策略：哪些自动执行、哪些必须用户确认 | |
-| `Intelligence/Planning/ProposalMaterializer.swift` | 确认后把待确认项物化为命令 | |
-| `Intelligence/Privacy/PrivacySplitter.swift` | 隐私分流算法：切出可上云 / 必须留本机的片段 | **[大模型]** |
-| `Intelligence/Privacy/ContextBuilder.swift` | 云上下文构建；发送前二次断言 | **[大模型]** |
-| `Intelligence/Privacy/LocalDirectRouter.swift` | 本地确定性匹配（完全不发云） | |
+| `Intelligence/Planning/ProposalValidator.swift` | 校验清单：批内引用（ref）、起止时间与步骤约束解析 | |
+| `Intelligence/Planning/ProposalMaterializer.swift` | 确认后把待确认项按依赖拓扑物化为原子批次命令 | |
+| `Intelligence/Privacy/ContextBuilder.swift` | 上下文构建：未归档计划、全部阶段、任务树、重复模板 | **[大模型]** |
 | `Intelligence/Speech/SpeechTranscriptionService.swift` | 本机语音转写 | **[语音]** |
 | `Intelligence/Support/RedactedLogger.swift` | 日志脱敏（只记元数据，不记正文/Key） | **[大模型]** |
 
@@ -269,9 +268,9 @@ Movo/
 
 | 文件 | 职责 |
 |---|---|
-| `App/MovoApp.swift` | `@main` 入口。启动流程：装通知处理 → 装载演示数据 → 启动同步 → 写通知排期 |
+| `App/MovoApp.swift` | `@main` 入口。启动流程：装通知处理 → 空启动（不载入演示数据） → 启动同步 → 写通知排期 |
 | `App/AppEnvironment.swift` | **依赖容器，改造项目的第一站**。所有服务（store / keyStore / speech / scheduler）在此组装；`live()` 是生产装配，`preview()` 是测试装配 |
-| `App/AppEnvironment+Capture.swift` | 输入管线 C1 落库 → C2 隐私分流 → … → C9 结果态 |
+| `App/AppEnvironment+Capture.swift` | 输入管线 C1 落库 → C2 全局 AI 开关与凭据预检 → … → C8 结果态 |
 | `App/Navigation/Route.swift` | 全部页面枚举；`artboardName` 给出与设计稿的对应关系 |
 | `App/Navigation/ScreenHost.swift` | **Route → 页面文件 的对照表**。想找某个界面在哪个文件，从这里查 |
 | `App/Navigation/RootView.swift` | 双端外壳：iPhone 底部标签 / Mac 侧边导航 |
@@ -286,13 +285,13 @@ Movo/
 | 目录 | 覆盖界面（设计稿画板） | 代表文件 |
 |---|---|---|
 | `Today/` | D01 / M01 待办 | `TodayScreen.swift` |
-| `Inbox/` | D05 / M05 收件箱 | `InboxScreen.swift` |
-| `Plans/` | D02 / M03 / M07 / M11 / M12 计划、任务、快照、频率、结果 | `PlansScreen.swift`、`PlanDetailScreen.swift`、`TaskDetailScreen.swift`、`SnapshotScreen.swift`、`RecurrenceScreens.swift`、`MeasurementScreens.swift` |
-| `Review/` | D08 / M10 周回顾 | `ReviewScreen.swift` |
+| `Inbox/` | D05 / M05 整理记录（历次 AI 输入流、待确认项唤起、回退与重试） | `OrganizeHistoryScreen.swift` |
+| `Plans/` | D02 / M03 / M07 / M11 / M12 计划、任务、快照、频率、结果、时间线 | `PlansScreen.swift`、`PlanDetailScreen.swift`、`TaskDetailScreen.swift`、`SnapshotScreen.swift`、`RecurrenceScreens.swift`、`MeasurementScreens.swift` |
+| `Review/` | D08 / M10 周回顾（7天分布、精力堆叠条、指标趋势微图） | `ReviewScreen.swift` |
 | `Search/` | D10 / M06 搜索 | `SearchScreen.swift` |
-| `Settings/` | M13 设置、导出预览、最近删除、冲突裁决 | `SettingsScreen.swift`、`SettingsSections.swift`、`ExportPreviewScreen.swift`、`RecentlyDeletedScreen.swift`、`ConflictResolutionScreen.swift` |
+| `Settings/` | M13 设置、导出预览、导入 Movo 文件、最近删除、冲突裁决 | `SettingsScreen.swift`、`SettingsSections.swift`、`ExportPreviewScreen.swift`、`ImportPlanScreen.swift`、`RecentlyDeletedScreen.swift`、`ConflictResolutionScreen.swift` |
 | `Plans/NewTaskSheet.swift`、`Shared/TaskOutline.swift` | D04-Manual / M04-Manual 手动创建、M12-Subtasks 多级子任务 | `DomainStore+Todos.swift`、`TaskHierarchy.swift` |
-| `Capture/` | D04 / M04 / M02 AI 输入、录音、转写、整理中、失败 | `CaptureSheets.swift`、`CaptureStatusScreens.swift` |
+| `Capture/` | D04 / M04 / M02 AI 输入、录音、转写、整理中、失败、批量预览 | `CaptureSheets.swift`、`CaptureStatusScreens.swift`、`BulkPreviewScreen.swift` |
 | `Shared/` | 页面骨架与共用控件 | `Scaffold.swift`、`FormControls.swift`、`SyncStatusBadge.swift` |
 
 ### 1.11 Tests
@@ -319,8 +318,7 @@ Movo/
 | 数据没存住 / 存错 | `Data/Local/`（`SwiftDataRepository` → `LocalAdapter` → `SwiftDataModels`） |
 | 校验拦截了操作、报错文案 | `Domain/Policies/StructurePolicy.swift`、`Domain/MovoError.swift` |
 | 进度百分比不对 | `Domain/Policies/ProgressPolicy.swift` |
-| AI 输出没被采纳 / 进了收件箱 | `Intelligence/Planning/ProposalValidator.swift`、`ExecutionPolicy.swift` |
-| 不该上云的内容上云了 | `Intelligence/Privacy/PrivacySplitter.swift`、`ContextBuilder.swift` |
+| AI 输出解析失败 / 校验问题 | `Intelligence/Planning/ProposalValidator.swift`、`AIProposal.swift` |
 | AI 请求失败 / 超时 | `Intelligence/Providers/AITransport.swift`、对应 Adapter、`Domain/AIFailureCause.swift`（失败原因文案） |
 | 自定义厂商填了地址却连不上 | `Movo/project.yml` 的 `info:` 段（ATS 与本地网络权限），见 §7.3 与 §8 排障表 |
 | 模型清单要增删 | `Config/ModelsCatalog.json` |
@@ -939,15 +937,14 @@ DEVELOPMENT_TEAM[sdk=iphoneos*]: "RPD22D948M"
 | 文件 | 内容 |
 |---|---|
 | `Movo/Config/ModelsCatalog.json` | 内置厂商（DeepSeek）的 chat completions 端点与模型清单 |
-| `Movo/Config/Defaults.json` | 超时（连接 10s / 总 30s）、重试次数、置信度阈值、单次输入上限 |
-| `Movo/Config/HealthKeywords.json` | 健康敏感词表，命中即判定为受限内容 |
+| `Movo/Config/Defaults.json` | 超时（单次等待 60s / 总 120s）、重试次数、回退步数（默认 5 步）、单次输入上限 |
 | `Movo/Intelligence/Providers/AIKeyStore.swift` | Key 存 Keychain：service = `Movo.AIKey.<vendor>`，`kSecAttrAccessibleWhenUnlockedThisDeviceOnly`，**不参与 iCloud Keychain 同步** |
 | `Movo/Intelligence/Providers/AITransport.swift` | 超时 / 重试 / 取消；把 `URLError` 归一为可诊断的失败分类；仅网络类错误与 429/5xx 自动重试 |
 | `Movo/Intelligence/Providers/OpenAICompatibleAdapter.swift` | OpenAI 兼容协议适配（内置厂商与自定义厂商共用） |
 | `Movo/Intelligence/Providers/AIProviderResolver.swift` | 厂商 + 用户配置 → 端点/模型；自定义未填全时抛 `providerNotConfigured` |
-| `Movo/Intelligence/Providers/AISettingsStore.swift` | 厂商选择与自定义 Base URL／模型 ID 的本机持久化（Key 不在此处） |
+| `Movo/Intelligence/Providers/AISettingsStore.swift` | 全局 AI 开关、厂商选择与自定义 Base URL／模型 ID 的本机持久化（Key 不在此处） |
 | `Movo/Domain/AIFailureCause.swift` | 失败原因的机器标识 → 用户可执行解释的映射表 |
-| `Movo/Intelligence/Privacy/{PrivacySplitter,ContextBuilder}.swift` | 决定哪些内容可以出本机 |
+| `Movo/Intelligence/Privacy/ContextBuilder.swift` | 云端请求上下文构建：未归档计划、全部阶段、任务树、重复模板 |
 
 **Key 的获取与使用**
 
@@ -1039,7 +1036,7 @@ iOS 侧麦克风与语音识别**不需要额外 entitlement**，仅靠 Info.pli
 | 同步一直 `unavailable` | 未配置 iCloud，或未登录，或无付费账号 | §7.2 |
 | AI 请求 401 | Key 无效或与所选厂商不匹配 | 设置页「测试连接」；核对 Key 前缀 |
 | AI 请求超时 | 网络或超时参数 | `Config/Defaults.json` 的 `connect_timeout_seconds` / `total_timeout_seconds` |
-| 不该上云的内容被发出 | 隐私分流判定有误 | `Intelligence/Privacy/PrivacySplitter.swift`，并补 `MovoPrivacyTests` 用例 |
+| AI 整理提示未开启或无 Key | 全局 AI 开关关闭或 Key 未填写 | 设置页开启 AI 开关并填入有效 Key |
 | 通知不响 | 权限未授予或时刻配置 | 系统设置里给 Movo 通知权限；`Config/Defaults.json` 的 notification 段 |
 | 真机装不上 | 签名 / 信任 / 开发者模式 | §5.5 |
 | `No Accounts` | xcodebuild 未看到账号 | §5.1 走 GUI 首次部署 |

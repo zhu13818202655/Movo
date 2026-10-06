@@ -43,13 +43,16 @@ public extension AppEnvironment {
 
     @discardableResult
     func updateCaptureState(_ captureID: UUID, state: CaptureState,
-                            batchID: UUID? = nil, editedText: String? = nil) async -> Bool {
+                            batchID: UUID? = nil, editedText: String? = nil,
+                            proposalJSON: String? = nil) async -> Bool {
         guard let capture = await store.repository.capture(captureID) else { return false }
         do {
             _ = try await store.execute(ProcessCapture(
                 id: captureID, rawText: capture.rawText, editedText: editedText ?? capture.editedText,
                 inputMode: capture.inputMode, segments: capture.segments, state: state,
-                batchID: batchID ?? capture.batchId, audioRetention: capture.audioRetention))
+                batchID: batchID ?? capture.batchId,
+                proposalJSON: proposalJSON ?? capture.proposalJSON,
+                audioRetention: capture.audioRetention))
             return true
         } catch { recordCaptureError(error); return false }
     }
@@ -62,8 +65,7 @@ public extension AppEnvironment {
             return
         }
         if let batch = await store.repository.batch(CaptureCommand.batchID(for: captureID)), batch.state == .undone {
-            var preparation = ProposalPreparation(captureID: captureID,
-                privacy: PrivacySplitter.split(text: "", plans: [], healthKeywords: []))
+            var preparation = ProposalPreparation(captureID: captureID)
             preparation.undoSummary = batch.summary
             await finishCapture(captureID, preparation: preparation)
             return
@@ -104,22 +106,23 @@ public extension AppEnvironment {
         if let proposal = savedProposals[captureID] {
             preparation = await ProposalService(provider: SavedProposalProvider(proposal: proposal),
                                                  defaults: defaults).prepare(request)
-            // 已建计划可能改变隐私匹配；不能把旧原文重新解释为新的本地完成指令。
-            preparation.localMatches.removeAll { $0.kind.isDeterministic }
+        } else if !globalAIEnabled {
+            preparation = ProposalPreparation(captureID: captureID, skippedCloudCall: true)
+            preparation.error = .invalidStructure(reason: "全局 AI 已关闭，原文已保存。可在设置中开启。")
         } else if isConfigured(for: target) {
             do {
                 preparation = await (try makeProposalService(vendor: vendor, model: model)).prepare(request)
                 recordUsage(preparation.usage)
             } catch {
-                preparation = localOnlyPreparation(request)
+                preparation = ProposalPreparation(captureID: captureID, skippedCloudCall: true)
                 preparation.error = error as? MovoError ?? .aiFailed(stage: .unknown, cause: "provider")
             }
         } else {
-            preparation = localOnlyPreparation(request)
+            preparation = ProposalPreparation(captureID: captureID, skippedCloudCall: true)
             preparation.error = configurationError(for: target)
         }
 
-        // 先保存提案再写命令；重试回放同一提案，不重新生成另一组任务。
+        // 保存提案供回放与预览重新打开
         if let proposal = preparation.proposal {
             savedProposals[captureID] = proposal
             do {
@@ -127,30 +130,8 @@ public extension AppEnvironment {
                 capturePreferences?.set(data, forKey: "movo.capture.proposals")
             } catch { recordCaptureError(error); return }
         }
-        var commands: [any DomainCommand] = preparation.deterministicLocalMatches.compactMap { match in
-            guard let command = match.command else { return nil }
-            return CaptureCommand(command, captureID: captureID,
-                                  key: "local|\(match.kind.rawValue)|\(match.sourceText)")
-        }
-        commands += preparation.autoCommands.map { command in
-            CaptureCommand(command, captureID: captureID,
-                           key: "auto|\(preparation.validated.commandKeys[command.operationID] ?? command.operationID.uuidString)")
-        }
-        if applyAutomaticCommands {
-            if let result = await apply(commands: commands, captureID: captureID) {
-                preparation.commitRejections = result.rejected
-            } else if !commands.isEmpty {
-                preparation.error = lastError
-            }
-        } else {
-            for command in commands {
-                if await store.repository.operation(command.operationID) == nil {
-                    preparation.commitRejections.append(BatchRejection(operationID: command.operationID,
-                                                                    entityID: command.entityID,
-                                                                    reason: "这项内容尚未保存，可以重试整理。"))
-                }
-            }
-        }
+
+        // AI 的所有写入都先展示预览，不直接自动落库
         var pending: [PendingProposal] = []
         for item in preparation.pendingProposals {
             let operationID = CaptureCommand.stableID(captureID: captureID, key: "confirm|\(item.id)|0")
@@ -160,19 +141,6 @@ public extension AppEnvironment {
         await finishCapture(captureID, preparation: preparation)
     }
 
-    func localOnlyPreparation(_ request: ProposalRequest) -> ProposalPreparation {
-        let excluded = Dictionary(request.plans.map { ($0.id, $0.excludedTerms) }, uniquingKeysWith: { a, _ in a })
-        let privacy = PrivacySplitter.split(text: request.effectiveText, plans: request.plans,
-                                            healthKeywords: ConfigLoader.loadHealthKeywords(), excludedTermsByPlan: excluded)
-        let matches = LocalDirectRouter.route(privacy: privacy, plans: request.plans,
-                                               tasks: request.tasksByPlan.values.flatMap { $0 },
-                                               occurrences: request.occurrencesByTask.values.flatMap { $0 },
-                                               today: request.today, now: store.now, source: request.source,
-                                               captureID: request.captureID)
-        return ProposalPreparation(captureID: request.captureID, privacy: privacy,
-                                   localMatches: matches, skippedCloudCall: true)
-    }
-
     @discardableResult
     func apply(commands: [any DomainCommand], captureID: UUID? = nil,
                summary: String? = nil) async -> BatchResult? {
@@ -180,7 +148,6 @@ public extension AppEnvironment {
         do {
             var remaining: [any DomainCommand] = []
             for command in commands {
-                // 不重放已执行或已撤销的命令。
                 if await store.repository.operation(command.operationID) == nil { remaining.append(command) }
             }
             guard !remaining.isEmpty else { return BatchResult(batchID: captureID.map(CaptureCommand.batchID(for:)) ?? UUID()) }
@@ -198,33 +165,49 @@ public extension AppEnvironment {
         isProcessing = true
         lastError = nil
         defer { isProcessing = false }
+
         let tasks = Dictionary(await store.repository.allTasks().map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         var metrics: [UUID: PlanMetric] = [:]
         for plan in await store.repository.allPlans() {
             for metric in await store.repository.metrics(planID: plan.id) { metrics[metric.id] = metric }
         }
         let rules = Dictionary(await store.repository.rules().map { ($0.taskId, $0) }, uniquingKeysWith: { a, _ in a })
-        for item in pending where preparation.pendingProposals.contains(where: { $0.id == item.id }) {
-            let materialized = ProposalValidator.materialize(
-                item, tasks: tasks, metrics: metrics, rules: rules, timeZone: store.currentTimeZone,
-                today: store.today, source: .ai, captureID: captureID,
-                planID: CaptureCommand.stableID(captureID: captureID, key: "plan|\(item.id)"))
-            guard !materialized.isEmpty else {
-                lastError = .invalidStructure(reason: "这项建议信息不足，请编辑原文后重新整理。")
-                continue
-            }
-            let commands: [any DomainCommand] = materialized.enumerated().map {
-                CaptureCommand($0.element, captureID: captureID, key: "confirm|\(item.id)|\($0.offset)")
-            }
-            do {
-                // 一个新计划与其初始待办必须一起成功，不能留下半份计划。
-                _ = try await store.executeBatch(BatchInput(batchID: CaptureCommand.batchID(for: captureID), captureId: captureID,
-                                                           source: .ai, commands: commands,
-                                                           summary: item.affectedSummary, deviceId: store.deviceId))
-                preparation.validated.needsConfirmation.removeAll { $0.id == item.id }
-                lastBatchNotice = store.lastNotification
-            } catch { recordCaptureError(error) }
+
+        let acceptedItems = pending.filter { p in preparation.pendingProposals.contains(where: { $0.id == p.id }) }
+        guard !acceptedItems.isEmpty else { return }
+
+        let materialized = ProposalValidator.materializeBatch(
+            acceptedItems,
+            plans: await store.repository.allPlans(),
+            tasks: tasks,
+            metrics: metrics,
+            rules: rules,
+            timeZone: store.currentTimeZone,
+            today: store.today,
+            source: .ai,
+            captureID: captureID)
+
+        let commands: [any DomainCommand] = materialized.enumerated().map {
+            CaptureCommand($0.element, captureID: captureID, key: "batch|\($0.offset)")
         }
+
+        do {
+            let summaryText = acceptedItems.map(\.affectedSummary).prefix(3).joined(separator: "、")
+            _ = try await store.executeBatch(BatchInput(
+                batchID: CaptureCommand.batchID(for: captureID),
+                captureId: captureID,
+                source: .ai,
+                commands: commands,
+                summary: "AI 整理：" + summaryText,
+                deviceId: store.deviceId))
+
+            let acceptedIDs = Set(acceptedItems.map(\.id))
+            preparation.validated.needsConfirmation.removeAll { acceptedIDs.contains($0.id) }
+            lastBatchNotice = store.lastNotification
+        } catch {
+            recordCaptureError(error)
+        }
+
         preparation.error = lastError
         await finishCapture(captureID, preparation: preparation)
     }
@@ -234,20 +217,22 @@ public extension AppEnvironment {
               let capture = await store.repository.capture(captureID) else { return }
         let batch = await store.repository.batch(CaptureCommand.batchID(for: captureID))
         if capture.state == .aiSucceeded || batch?.state == .undone {
-            var result = ProposalPreparation(captureID: captureID,
-                privacy: PrivacySplitter.split(text: "", plans: [], healthKeywords: []))
+            var result = ProposalPreparation(captureID: captureID)
             result.appliedOperations = await store.repository.operations(batchID: CaptureCommand.batchID(for: captureID)).filter { $0.status == .applied }
             result.undoSummary = batch?.state == .undone ? batch?.summary : nil
             captureResults[captureID] = result
             lastPreparation = result
             return
         }
-        // 仅回放本机保存的提案，不在打开界面时发起新的付费请求。
+        if savedProposals[captureID] == nil, let json = capture.proposalJSON,
+           let data = json.data(using: .utf8),
+           let prop = try? JSONDecoder().decode(AIProposal.self, from: data) {
+            savedProposals[captureID] = prop
+        }
         if savedProposals[captureID] != nil {
             await processCapture(captureID, applyAutomaticCommands: false)
         } else {
-            var result = ProposalPreparation(captureID: captureID,
-                                             privacy: PrivacySplitter.split(text: "", plans: [], healthKeywords: []))
+            var result = ProposalPreparation(captureID: captureID)
             result.error = .invalidStructure(reason: "原文已保留，整理尚未完成。可以重试或手动处理。")
             result.appliedOperations = await store.repository.operations(batchID: CaptureCommand.batchID(for: captureID)).filter { $0.status == .applied }
             captureResults[captureID] = result
@@ -259,13 +244,25 @@ public extension AppEnvironment {
     func finishCapture(_ captureID: UUID, preparation: ProposalPreparation) async {
         var result = preparation
         result.appliedOperations = await store.repository.operations(batchID: CaptureCommand.batchID(for: captureID)).filter { $0.status == .applied }
-        if !result.privacyViolations.isEmpty {
-            result.error = .invalidStructure(reason: "部分内容受隐私设置限制，已留在本机，请到收件箱处理。")
+        let batch = await store.repository.batch(CaptureCommand.batchID(for: captureID))
+        let state: CaptureState
+        if batch?.state == .undone {
+            state = .undone
+        } else if !result.pendingProposals.isEmpty {
+            state = .pendingConfirmation
+        } else if !result.appliedOperations.isEmpty {
+            state = result.isPartial ? .aiPartial : .aiSucceeded
+        } else if result.error != nil {
+            state = .aiFailed
+        } else {
+            state = .saved
         }
-        let state: CaptureState = result.isPartial
-            ? (result.appliedOperations.isEmpty && result.error != nil ? .aiFailed : .aiPartial)
-            : (result.appliedOperations.isEmpty ? .saved : .aiSucceeded)
-        if !(await updateCaptureState(captureID, state: state, batchID: CaptureCommand.batchID(for: captureID))) { result.error = lastError }
+        let propJSON = result.proposal.flatMap { p in
+            (try? JSONEncoder().encode(p)).flatMap { String(data: $0, encoding: .utf8) }
+        }
+        if !(await updateCaptureState(captureID, state: state, batchID: CaptureCommand.batchID(for: captureID), proposalJSON: propJSON)) {
+            result.error = lastError
+        }
         captureResults[captureID] = result
         lastPreparation = result
         lastError = result.error

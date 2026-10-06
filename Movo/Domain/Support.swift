@@ -130,8 +130,6 @@ public struct AppDefaults: Sendable, Codable {
     }
 
     public struct AI: Sendable, Codable {
-        public var classificationConfidenceThreshold: Double
-        public var classificationMarginThreshold: Double
         public var maxItemsPerInput: Int
         public var maxTextCharacters: Int
         public var recentTaskTitlesLimit: Int
@@ -143,8 +141,6 @@ public struct AppDefaults: Sendable, Codable {
         public var progressMustShowAfterSeconds: Double
 
         enum CodingKeys: String, CodingKey {
-            case classificationConfidenceThreshold = "classification_confidence_threshold"
-            case classificationMarginThreshold = "classification_margin_threshold"
             case maxItemsPerInput = "max_items_per_input"
             case maxTextCharacters = "max_text_characters"
             case recentTaskTitlesLimit = "recent_task_titles_limit"
@@ -154,6 +150,26 @@ public struct AppDefaults: Sendable, Codable {
             case autoRetryCount = "auto_retry_count"
             case autoRetryBackoffSeconds = "auto_retry_backoff_seconds"
             case progressMustShowAfterSeconds = "progress_must_show_after_seconds"
+        }
+
+        public init(maxItemsPerInput: Int = 10,
+                    maxTextCharacters: Int = 2000,
+                    recentTaskTitlesLimit: Int = 10,
+                    contextTasksLimit: Int = 30,
+                    connectTimeoutSeconds: Double = 60,
+                    totalTimeoutSeconds: Double = 120,
+                    autoRetryCount: Int = 2,
+                    autoRetryBackoffSeconds: [Double] = [1, 2],
+                    progressMustShowAfterSeconds: Double = 15) {
+            self.maxItemsPerInput = maxItemsPerInput
+            self.maxTextCharacters = maxTextCharacters
+            self.recentTaskTitlesLimit = recentTaskTitlesLimit
+            self.contextTasksLimit = contextTasksLimit
+            self.connectTimeoutSeconds = connectTimeoutSeconds
+            self.totalTimeoutSeconds = totalTimeoutSeconds
+            self.autoRetryCount = autoRetryCount
+            self.autoRetryBackoffSeconds = autoRetryBackoffSeconds
+            self.progressMustShowAfterSeconds = progressMustShowAfterSeconds
         }
     }
 
@@ -188,23 +204,53 @@ public struct AppDefaults: Sendable, Codable {
         enum CodingKeys: String, CodingKey { case tombstoneRetentionDays = "tombstone_retention_days" }
     }
 
+    public var undoSteps: Int
     public var notifications: Notifications
     public var ai: AI
     public var capture: Capture
     public var sync: Sync
     public var lifecycle: Lifecycle
 
+    enum CodingKeys: String, CodingKey {
+        case undoSteps = "undo_steps"
+        case notifications, ai, capture, sync, lifecycle
+    }
+
+    public init(undoSteps: Int = 5,
+                notifications: Notifications,
+                ai: AI,
+                capture: Capture,
+                sync: Sync,
+                lifecycle: Lifecycle) {
+        self.undoSteps = undoSteps
+        self.notifications = notifications
+        self.ai = ai
+        self.capture = capture
+        self.sync = sync
+        self.lifecycle = lifecycle
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.undoSteps = try container.decodeIfPresent(Int.self, forKey: .undoSteps) ?? 5
+        self.notifications = try container.decode(Notifications.self, forKey: .notifications)
+        self.ai = try container.decode(AI.self, forKey: .ai)
+        self.capture = try container.decode(Capture.self, forKey: .capture)
+        self.sync = try container.decode(Sync.self, forKey: .sync)
+        self.lifecycle = try container.decode(Lifecycle.self, forKey: .lifecycle)
+    }
+
     /// 内置兜底值：Config 资源缺失时仍可运行（不阻塞构建）
     public static let fallback = AppDefaults(
+        undoSteps: 5,
         notifications: Notifications(
             timedTaskLeadMinutes: 0, dateOnlyTaskHour: 9, dateOnlyTaskMinute: 0,
             hardDeadlineLeadDays: 1, hardDeadlineSameDayHour: 9, hardDeadlineSameDayMinute: 0,
             quietHoursStart: 22, quietHoursEnd: 7, aggregationWindowMinutes: 15,
             weeklyReviewWeekday: 7, weeklyReviewHour: 20, weeklyReviewMinute: 0,
             blockedReminderEnabled: false, blockedRescheduleThreshold: 3, lockScreenHideDetails: true),
-        ai: AI(classificationConfidenceThreshold: 0.90, classificationMarginThreshold: 0.15,
-               maxItemsPerInput: 10, maxTextCharacters: 2000, recentTaskTitlesLimit: 10,
-               contextTasksLimit: 30, connectTimeoutSeconds: 10, totalTimeoutSeconds: 30,
+        ai: AI(maxItemsPerInput: 10, maxTextCharacters: 2000, recentTaskTitlesLimit: 10,
+               contextTasksLimit: 30, connectTimeoutSeconds: 60, totalTimeoutSeconds: 120,
                autoRetryCount: 2, autoRetryBackoffSeconds: [1, 2], progressMustShowAfterSeconds: 15),
         capture: Capture(maxRecordingSeconds: 180, stopFinalSegmentTimeoutSeconds: 3,
                          audioRetentionHours: 24, audioRetentionDefault: "none"),
@@ -220,15 +266,6 @@ public enum ConfigLoader {
               let decoded = try? JSONDecoder().decode(AppDefaults.self, from: data)
         else { return .fallback }
         return decoded
-    }
-
-    public static func loadHealthKeywords(bundle: Bundle = .movoResources) -> [String] {
-        struct Doc: Decodable { let keywords: [String] }
-        guard let url = bundle.url(forResource: "HealthKeywords", withExtension: "json"),
-              let data = try? Data(contentsOf: url),
-              let doc = try? JSONDecoder().decode(Doc.self, from: data)
-        else { return HealthKeywordFallback.builtin }
-        return doc.keywords
     }
 
     public static func loadModelCatalog(bundle: Bundle = .movoResources) -> ModelCatalog {
@@ -252,15 +289,6 @@ extension Bundle {
 }
 
 final class BundleToken {}
-
-/// 健康词表内置兜底（Config 资源不可用时）
-public enum HealthKeywordFallback {
-    public static let builtin: [String] = [
-        "体重", "称重", "减肥", "减重", "公斤", "千克", "体脂", "腰围", "卡路里", "热量",
-        "饮食", "节食", "血糖", "血压", "心率", "睡眠", "失眠", "散步", "跑步", "慢跑",
-        "游泳", "骑行", "锻炼", "健身", "运动", "瑜伽", "体检", "复诊", "吃药", "服药"
-    ]
-}
 
 // MARK: - 模型清单
 

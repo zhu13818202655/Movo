@@ -1,0 +1,175 @@
+{
+    "_说明": "完整示例：一个计划 + 阶段 + 指标 + 多级任务 + 重复行动与步骤 + 前置关系 + 可选的记录/测量值/笔记 + 一个独立待办。以下划线开头的键会被导入忽略。日期是 2026 年 10–12 月，导入时请把『今天』当作 2026-10-04 前后，否则重复行动的起始日会晚于计划结束日。",
+    "format": "movo.plan-file",
+    "schemaVersion": 1,
+    "plans": [
+        {
+            "id": "plan-cet6",
+            "name": "英语六级冲刺",
+            "kind": "improvement",
+            "category": "study",
+            "goal": "12 月考过六级",
+            "startAt": "2026-10-01",
+            "endAt": "2026-12-31",
+            "aliases": [
+                "六级",
+                "CET6"
+            ],
+            "stages": [
+                {
+                    "id": "s-base",
+                    "name": "打基础",
+                    "criteria": "词汇量过 4000",
+                    "startAt": "2026-10-01",
+                    "endAt": "2026-11-15"
+                },
+                {
+                    "id": "s-drill",
+                    "name": "刷题",
+                    "startAt": "2026-11-16",
+                    "endAt": "2026-12-15"
+                }
+            ],
+            "metrics": [
+                {
+                    "id": "m-vocab",
+                    "name": "词汇量",
+                    "unit": "个",
+                    "targetValue": 4500,
+                    "direction": "increase"
+                }
+            ],
+            "tasks": [
+                {
+                    "id": "t-book",
+                    "title": "选定教材",
+                    "stage": "s-base",
+                    "startAt": "2026-10-05",
+                    "endAt": "2026-10-10",
+                    "estimateMinutes": 60,
+                    "priority": "high",
+                    "tags": [
+                        "起步"
+                    ],
+                    "children": [
+                        {
+                            "id": "t-book-compare",
+                            "title": "对比三本教材",
+                            "endAt": "2026-10-08",
+                            "status": "done"
+                        },
+                        {
+                            "id": "t-book-buy",
+                            "title": "下单",
+                            "endAt": "2026-10-10",
+                            "dependsOn": [
+                                "t-book-compare"
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": "t-plan",
+                    "title": "制定每日计划",
+                    "stage": "s-base",
+                    "endAt": "2026-10-12",
+                    "dependsOn": [
+                        "t-book"
+                    ]
+                },
+                {
+                    "id": "t-words",
+                    "title": "背单词",
+                    "stage": "s-base",
+                    "recurrence": {
+                        "pattern": "weekdays",
+                        "weekdays": [
+                            1,
+                            2,
+                            3,
+                            4,
+                            5
+                        ],
+                        "effectiveFrom": "2026-10-05",
+                        "effectiveUntil": "2026-11-15",
+                        "dailyStart": "08:00",
+                        "dailyEnd": "08:30"
+                    },
+                    "steps": [
+                        {
+                            "title": "复习旧词"
+                        },
+                        {
+                            "title": "学新词",
+                            "children": [
+                                {
+                                    "title": "第一组 20 个"
+                                },
+                                {
+                                    "title": "第二组 20 个"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": "t-mock",
+                    "title": "全真模拟题",
+                    "stage": "s-drill",
+                    "startAt": "2026-11-16",
+                    "endAt": "2026-12-10",
+                    "children": [
+                        {
+                            "id": "t-mock-1",
+                            "title": "第一套",
+                            "endAt": "2026-11-22"
+                        },
+                        {
+                            "id": "t-mock-2",
+                            "title": "第二套",
+                            "endAt": "2026-11-29",
+                            "dependsOn": [
+                                "t-mock-1"
+                            ],
+                            "children": [
+                                {
+                                    "title": "错题复盘",
+                                    "endAt": "2026-11-28"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ],
+            "records": [
+                {
+                    "task": "t-book-compare",
+                    "at": "2026-10-06",
+                    "minutes": 40,
+                    "text": "对比了三本教材的目录"
+                }
+            ],
+            "measurements": [
+                {
+                    "metric": "m-vocab",
+                    "at": "2026-10-01",
+                    "value": 3200,
+                    "note": "起点"
+                }
+            ],
+            "notes": [
+                {
+                    "text": "考前一周只做真题",
+                    "kind": "decision"
+                }
+            ]
+        }
+    ],
+    "tasks": [
+        {
+            "title": "报名六级考试",
+            "endAt": "2026-10-20T18:00:00+08:00",
+            "priority": "high"
+        }
+    ]
+}

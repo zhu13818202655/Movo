@@ -9,6 +9,9 @@
 
 import SwiftUI
 import MovoKit
+#if canImport(UniformTypeIdentifiers)
+import UniformTypeIdentifiers
+#endif
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -41,6 +44,7 @@ struct AISettingsView: View {
     @State private var model: String = ""
     @State private var keyInput = ""
     @State private var connectionState: ConnectionState = .idle
+    @State private var showNoticeAlert = false
 
     enum ConnectionState: Equatable {
         case idle
@@ -62,6 +66,32 @@ struct AISettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: MovoSpace.l) {
+            MovoFormSection("全局 AI 开关",
+                            footnote: "开启后，语音与文字整理将使用你配置的模型服务商。输入原文会原样发送给模型。") {
+                Toggle(isOn: Binding(
+                    get: { env.globalAIEnabled },
+                    set: { newValue in
+                        if newValue && !env.hasShownPrivacyNotice {
+                            showNoticeAlert = true
+                        }
+                        env.globalAIEnabled = newValue
+                    })) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("启用 AI 智能整理").font(MovoFont.bodyEmphasis)
+                        Text("关闭后不向模型发送网络请求，原文仅保留在整理记录中。")
+                            .font(MovoFont.caption).foregroundStyle(MovoColor.muted)
+                    }
+                }
+                .toggleStyle(.switch)
+            }
+            .alert("服务告知", isPresented: $showNoticeAlert) {
+                Button("知道了", role: .cancel) {
+                    env.hasShownPrivacyNotice = true
+                }
+            } message: {
+                Text("输入原文会原样发送给你配置的模型服务商。API Key 仍仅保存在设备钥匙串中，日志严格脱敏。")
+            }
+
             MovoFormSection("提供商",
                             footnote: "Key 只保存在本机钥匙串（kSecAttrAccessibleWhenUnlockedThisDeviceOnly）；自定义厂商的 Base URL 与模型 ID 存在本机偏好。三者都不会同步到 iCloud，也不会进入导出。") {
                 MovoFormRow("厂商") {
@@ -262,7 +292,7 @@ struct AISettingsView: View {
     }
 }
 
-// MARK: - 计划隐私（两个开关独立）
+// MARK: - 计划同步
 
 struct PrivacySettingsView: View {
     @Environment(AppEnvironment.self) private var env
@@ -271,10 +301,10 @@ struct PrivacySettingsView: View {
     @State private var loaded = false
 
     var body: some View {
-        MovoFormSection("计划隐私",
-                        footnote: "「允许云端 AI」与「云同步」互不影响：可以只在本机整理但仍然同步，反之亦然。") {
+        MovoFormSection("计划同步",
+                        footnote: "可为每个计划单独配置是否同步到 iCloud。") {
             if plans.isEmpty && loaded {
-                Text("还没有计划。新建计划时可以单独设置这两个开关。")
+                Text("还没有计划。新建计划时可以设置同步开关。")
                     .font(MovoFont.body).foregroundStyle(MovoColor.muted)
             }
             ForEach(plans) { plan in
@@ -285,15 +315,6 @@ struct PrivacySettingsView: View {
                         Spacer(minLength: 0)
                         StatusTag(planStatus: plan.status)
                     }
-                    Toggle(isOn: Binding(
-                        get: { plan.cloudAIEnabled },
-                        set: { newValue in
-                            _Concurrency.Task { await setCloudAI(plan, enabled: newValue) }
-                        })) {
-                        Text("允许云端 AI 处理").font(MovoFont.body).foregroundStyle(MovoColor.ink)
-                    }
-                    .toggleStyle(.switch).controlSize(.small)
-
                     Toggle(isOn: Binding(
                         get: { plan.syncEnabled },
                         set: { newValue in
@@ -308,14 +329,6 @@ struct PrivacySettingsView: View {
             }
         }
         .task { await reload() }
-    }
-
-    private func setCloudAI(_ plan: Plan, enabled: Bool) async {
-        var patch = PlanPatch()
-        patch.cloudAIEnabled = enabled
-        _ = try? await env.store.execute(UpdatePlan(planID: plan.id, patch: patch,
-                                                baseRevision: plan.revision))
-        await reload()
     }
 
     private func setSync(_ plan: Plan, enabled: Bool) async {
@@ -565,81 +578,40 @@ struct NotificationSettingsView: View {
 // MARK: - 导出（T1.8）
 
 struct ExportSettingsView: View {
-    @Environment(AppEnvironment.self) private var env
+    @Environment(\.movoRouter) private var router
 
-    @State private var format: ExportFormat = .markdown
-    @State private var includeSensitive = false
-    @State private var bundle: ExportBundle?
-    @State private var copied = false
+    @State private var showTemplateExporter = false
 
     var body: some View {
-        MovoFormSection("导出格式", footnote: "JSON 导出含依赖关系字段（前置任务），可被重新解析后再导入。") {
-            MovoFormRow("格式") {
-                MovoRequiredChipRow(options: ExportFormat.allCases, selection: $format,
-                                    label: \.displayName)
-            }
-            Toggle(isOn: $includeSensitive) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("包含未允许云 AI 的计划").font(MovoFont.bodyEmphasis)
-                        .foregroundStyle(MovoColor.ink)
-                    Text("默认排除：健康类等敏感计划不进入导出（AC16）。")
-                        .font(MovoFont.caption).foregroundStyle(MovoColor.muted)
-                }
-            }
-            .toggleStyle(.switch)
-        }
-
-        MovoFormSection("导出范围") {
+        MovoFormSection("导出",
+                        footnote: "导出计划、阶段、任务、重复规则、步骤和独立待办。行动记录、测量值、笔记在导出页里自己勾选。") {
             HStack(spacing: MovoSpace.s) {
-                MovoButton("导出全部计划", systemImage: "square.and.arrow.up", kind: .primary) {
-                    _Concurrency.Task { await generate(planID: nil) }
+                MovoButton("导出全部", systemImage: "square.and.arrow.up", kind: .primary) {
+                    router.push(.exportPreview(planID: nil))
                 }
                 Spacer(minLength: 0)
             }
         }
 
-        if let bundle {
-            MovoFormSection("预览", footnote: bundle.summaryText) {
-                HStack(spacing: MovoSpace.s) {
-                    MovoButton("复制内容", systemImage: "doc.on.doc", kind: .secondary) {
-                        copy(bundle.content)
-                    }
-                    MovoButton("重新生成", kind: .quiet) { _Concurrency.Task { await generate(planID: nil) } }
-                    Spacer(minLength: 0)
-                    if copied { MovoTag("已复制", systemImage: "checkmark") }
+        MovoFormSection("导入",
+                        footnote: "读取 .movo.json 文件。先预览要创建什么、哪些不合法，确认后作为一个批次写入，可以撤销。") {
+            HStack(spacing: MovoSpace.s) {
+                MovoButton("导入 Movo 文件", systemImage: "square.and.arrow.down", kind: .secondary) {
+                    router.push(.importPlan)
                 }
-                ScrollView {
-                    Text(bundle.content)
-                        .font(MovoFont.mono)
-                        .foregroundStyle(MovoColor.ink)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                        .padding(MovoSpace.s)
+                MovoButton("下载空模板", systemImage: "doc.badge.plus", kind: .quiet) {
+                    showTemplateExporter = true
                 }
-                .frame(maxHeight: 260)
-                .background(RoundedRectangle(cornerRadius: MovoRadius.button, style: .continuous)
-                    .fill(MovoColor.soft))
+                Spacer(minLength: 0)
             }
+            Text("空模板带字段说明，可以自己写，也可以和你的需求一起交给 AI 生成。")
+                .font(MovoFont.caption).foregroundStyle(MovoColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
         }
-    }
-
-    private func generate(planID: UUID?) async {
-        bundle = await ExportPreviewScreen.makeBundle(env: env, planID: planID,
-                                                      format: format,
-                                                      includeSensitive: includeSensitive)
-        copied = false
-    }
-
-    private func copy(_ text: String) {
-        #if canImport(UIKit)
-        UIPasteboard.general.string = text
-        copied = true
-        #elseif canImport(AppKit)
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
-        copied = true
-        #endif
+        .fileExporter(isPresented: $showTemplateExporter,
+                      document: ExportFileDocument(text: PlanFileTemplate.json),
+                      contentType: .json,
+                      defaultFilename: "movo-template.\(PlanFile.fileExtension)") { _ in }
     }
 }
 

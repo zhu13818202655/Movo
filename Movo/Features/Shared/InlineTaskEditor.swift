@@ -14,8 +14,8 @@ struct InlineTaskEditor: View {
     @State private var planID: UUID?
     @State private var plans: [PlanSummary] = []
     @State private var parent: MovoKit.Task?
-    @State private var hasDate = false
-    @State private var date = Date()
+    @State private var startDraft = TimePointDraft()
+    @State private var endDraft = TimePointDraft()
     @State private var priority = TaskPriority.normal
     @State private var more = false
     @State private var showDate = false
@@ -70,8 +70,9 @@ struct InlineTaskEditor: View {
             title = task?.title ?? ""
             notes = task?.notes ?? ""
             planID = task?.planId
-            hasDate = task?.scheduledDate != nil || (task == nil && scheduledToday)
-            date = task?.scheduledDate?.noon ?? env.store.now
+            startDraft = TimePointDraft(task?.startAt ?? (task == nil && scheduledToday ? TimePoint.day(env.store.today) : nil),
+                                        fallback: env.store.now)
+            endDraft = TimePointDraft(task?.endAt, fallback: env.store.now)
             priority = task?.priority ?? .normal
             loaded = true
             focused = true
@@ -89,11 +90,12 @@ struct InlineTaskEditor: View {
                 } label: { Label(planID.flatMap { id in plans.first { $0.id == id }?.name } ?? "独立待办", systemImage: "square.stack") }
             }
             Button { showDate = true } label: {
-                Label(hasDate ? DateOnly(from: date, in: env.store.currentTimeZone).displayString : "未安排", systemImage: "calendar")
+                Label(timeLabel, systemImage: "calendar")
             }
             .popover(isPresented: $showDate) {
                 VStack(alignment: .leading, spacing: MovoSpace.m) {
-                    MovoDateField("安排日期", isOn: $hasDate, date: $date, timeZone: env.store.currentTimeZone)
+                    MovoTimePointField("开始时间", draft: $startDraft, timeZone: env.store.currentTimeZone)
+                    MovoTimePointField("结束时间", draft: $endDraft, timeZone: env.store.currentTimeZone)
                     Button("完成") { showDate = false }
                 }.padding().frame(minWidth: 250)
                     .presentationCompactAdaptation(.popover)
@@ -109,6 +111,14 @@ struct InlineTaskEditor: View {
         .buttonStyle(.borderless)
     }
 
+    /// 按钮上的起止摘要：有开始显示开始，只有结束显示「截止」
+    private var timeLabel: String {
+        let tz = env.store.currentTimeZone
+        if let start = startDraft.point(in: tz) { return start.displayString }
+        if let end = endDraft.point(in: tz) { return "截止 \(end.displayString)" }
+        return "未安排"
+    }
+
     private var actions: some View {
         HStack {
             MovoButton(task == nil ? "添加" : "保存", isEnabled: loaded && !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -122,11 +132,14 @@ struct InlineTaskEditor: View {
         saving = true
         defer { saving = false }
         do {
-            let day = hasDate ? DateOnly(from: date, in: env.store.currentTimeZone) : nil
+            let tz = env.store.currentTimeZone
+            let start = startDraft.point(in: tz)
+            let end = endDraft.point(in: tz)
             let id: UUID
             if let task {
-                let patch = TaskPatch(title: title, notes: notes, priority: priority, scheduledDate: day,
-                                      clearNotes: notes.isEmpty, clearScheduledDate: !hasDate)
+                let patch = TaskPatch(title: title, notes: notes, priority: priority,
+                                      startAt: start, endAt: end,
+                                      clearNotes: notes.isEmpty, clearStartAt: start == nil, clearEndAt: end == nil)
                 _ = try await env.store.execute(UpdateTask(taskID: task.id, patch: patch, baseRevision: task.revision))
                 id = task.id
             } else {
@@ -138,7 +151,7 @@ struct InlineTaskEditor: View {
                 let result = try await env.store.execute(CreateTask(
                     title: title, planID: parentID == nil ? planID : currentParent?.planId,
                     stageID: currentParent?.stageId, parentID: parentID, notes: notes.isEmpty ? nil : notes,
-                    scheduledDate: day, priority: priority, source: .manual))
+                    startAt: start, endAt: end, priority: priority, source: .manual))
                 guard let entityID = result.entityID else { throw MovoError.invalidStructure(reason: "没有添加成功，请重试。") }
                 id = entityID
                 title = ""; notes = ""

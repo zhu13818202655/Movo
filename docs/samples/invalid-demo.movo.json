@@ -1,0 +1,52 @@
+{
+    "_说明": "故意写错的示例，用来看导入预览如何逐条标出问题。预期：5 个错误、1 个提示；『正常任务』和『前置写错了』仍可导入。",
+    "format": "movo.plan-file",
+    "schemaVersion": 1,
+    "plans": [
+        {
+            "name": "示例：有问题的计划",
+            "kind": "delivery",
+            "startAt": "2026-10-01",
+            "endAt": "2026-10-31",
+            "tasks": [
+                {
+                    "title": "正常任务"
+                },
+                {
+                    "title": "日期写错了",
+                    "endAt": "下周五"
+                },
+                {
+                    "title": "超出计划范围",
+                    "endAt": "2026-12-31"
+                },
+                {
+                    "title": "重复行动却带 children",
+                    "recurrence": {
+                        "pattern": "daily"
+                    },
+                    "children": [
+                        {
+                            "title": "x"
+                        }
+                    ]
+                },
+                {
+                    "id": "a",
+                    "title": "前置写错了",
+                    "dependsOn": [
+                        "不存在"
+                    ]
+                },
+                {
+                    "title": "状态写错了",
+                    "status": "finished"
+                }
+            ]
+        },
+        {
+            "name": "类型写错的计划",
+            "kind": "weekly"
+        }
+    ]
+}

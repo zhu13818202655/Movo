@@ -20,8 +20,11 @@ public struct PlanDetailScreen: View {
     @State private var tab: Tab = .actions
     @State private var activities: [ActionRecord] = []
     @State private var showHistory = false
+    @State private var actionsSubView: ActionsSubView = .tree
+    @State private var timelineView: PlanTimelineView?
 
     public enum Tab: String, CaseIterable, Hashable { case actions, records, results }
+    public enum ActionsSubView: String, CaseIterable, Hashable { case tree, timeline }
 
     public init(planID: UUID) { self.planID = planID }
 
@@ -55,9 +58,6 @@ public struct PlanDetailScreen: View {
                         Button("归档计划") { _Concurrency.Task { await archive(detail) } }
                         Button("导出当前计划") { router.present(.exportPreview(planID: planID)) }
                         Divider()
-                        Button(detail.plan.cloudAIEnabled ? "关闭云端 AI 处理" : "允许云端 AI 处理") {
-                            _Concurrency.Task { await toggleCloudAI(detail) }
-                        }
                         Button("删除计划", role: .destructive) { _Concurrency.Task { await delete(detail) } }
                     } label: {
                         Image(systemName: "ellipsis.circle")
@@ -110,16 +110,24 @@ public struct PlanDetailScreen: View {
                 HStack(spacing: MovoSpace.s) {
                     PlanCategoryTag(detail.plan.category)
                     StatusTag(planStatus: detail.plan.status)
-                    if let target = detail.plan.targetDate {
-                        MovoTag("截止 \(target.displayString)", systemImage: "calendar")
-                    }
-                    if !detail.plan.cloudAIEnabled {
-                        MovoTag("云端 AI 已关闭", systemImage: "lock")
+                    if let end = detail.plan.endAt {
+                        MovoTag("截止 \(end.displayString)", systemImage: "calendar")
+                    } else if let start = detail.plan.startAt {
+                        MovoTag("\(start.displayString) 开始", systemImage: "calendar")
                     }
                 }
-                if detail.progress.showsPercentage {
+                if detail.plan.kind == .delivery && !detail.stageSegments.isEmpty {
+                    MovoSegmentedProgressBar(
+                        segments: detail.stageSegments,
+                        totalDone: detail.progress.doneCount,
+                        totalCount: detail.progress.totalCount)
+                } else if detail.progress.showsPercentage {
                     MovoProgressBar(fraction: detail.progress.fraction,
                                     caption: detail.progress.snapshotText)
+                } else if detail.plan.kind == .improvement {
+                    improvementHeader(detail)
+                } else if detail.plan.kind == .maintenance {
+                    maintenanceHeader(detail)
                 } else {
                     Text(detail.progress.snapshotText)
                         .font(MovoFont.caption).foregroundStyle(MovoColor.muted)
@@ -135,6 +143,66 @@ public struct PlanDetailScreen: View {
             }
             .padding(MovoSpace.s)
         }
+    }
+
+    @ViewBuilder
+    private func improvementHeader(_ detail: PlanDetail) -> some View {
+        HStack(spacing: MovoSpace.s) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("周期行动")
+                    .font(MovoFont.caption)
+                    .foregroundStyle(MovoColor.muted)
+                Text("本周 \(detail.weekActions.done)/\(detail.weekActions.planned) 次")
+                    .font(MovoFont.headline)
+                    .foregroundStyle(MovoColor.ink)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(MovoSpace.s)
+            .background(RoundedRectangle(cornerRadius: MovoRadius.button).fill(MovoColor.soft))
+
+            if let trend = detail.trends.first {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack {
+                        Text(trend.name)
+                            .font(MovoFont.caption)
+                            .foregroundStyle(MovoColor.muted)
+                        Spacer()
+                        if let delta = trend.deltaText {
+                            Text(delta).font(MovoFont.caption).foregroundStyle(MovoColor.muted)
+                        }
+                    }
+                    if let latest = trend.latest {
+                        Text("\(PlanEditScreen.numberText(latest)) \(trend.unitDisplayName)")
+                            .font(MovoFont.headline)
+                            .foregroundStyle(MovoColor.ink)
+                    } else {
+                        Text("暂无测量")
+                            .font(MovoFont.caption)
+                            .foregroundStyle(MovoColor.muted)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(MovoSpace.s)
+                .background(RoundedRectangle(cornerRadius: MovoRadius.button).fill(MovoColor.soft))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func maintenanceHeader(_ detail: PlanDetail) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("周期行动")
+                    .font(MovoFont.caption)
+                    .foregroundStyle(MovoColor.muted)
+                Text(detail.weekActions.displayText)
+                    .font(MovoFont.headline)
+                    .foregroundStyle(MovoColor.ink)
+            }
+            Spacer()
+        }
+        .padding(MovoSpace.s)
+        .background(RoundedRectangle(cornerRadius: MovoRadius.button).fill(MovoColor.soft))
     }
 
     // MARK: - 行动
@@ -181,20 +249,35 @@ public struct PlanDetailScreen: View {
             }
         }
 
-        if detail.tree.nodes.isEmpty {
-            SectionBlock("执行树") {
-                Text("还没有任务。可以先加一条最小的下一步。")
-                    .font(MovoFont.body).foregroundStyle(MovoColor.muted)
-                    .padding(MovoSpace.s)
+        MovoSegmented(options: [
+            (ActionsSubView.tree, "执行树"),
+            (ActionsSubView.timeline, "时间线")
+        ], selection: $actionsSubView)
+
+        if actionsSubView == .tree {
+            if detail.tree.nodes.isEmpty {
+                SectionBlock("执行树") {
+                    Text("还没有任务。可以先加一条最小的下一步。")
+                        .font(MovoFont.body).foregroundStyle(MovoColor.muted)
+                        .padding(MovoSpace.s)
+                }
+            } else {
+                SectionBlock("执行树", trailing: detail.tree.progressText) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(detail.tree.nodes) { node in
+                            treeNode(node, depth: 0, detail: detail)
+                        }
+                    }
+                    .padding(.vertical, MovoSpace.xs)
+                }
             }
         } else {
-            SectionBlock("执行树", trailing: detail.tree.progressText) {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(detail.tree.nodes) { node in
-                        treeNode(node, depth: 0, detail: detail)
-                    }
+            if let timelineView {
+                MovoTimelineView(timeline: timelineView) { taskID in
+                    router.push(.taskDetail(taskID))
                 }
-                .padding(.vertical, MovoSpace.xs)
+            } else {
+                LoadingPlaceholder("正在读取时间线…")
             }
         }
     }
@@ -377,14 +460,6 @@ public struct PlanDetailScreen: View {
         await reload()
     }
 
-    private func toggleCloudAI(_ detail: PlanDetail) async {
-        var patch = PlanPatch()
-        patch.cloudAIEnabled = !detail.plan.cloudAIEnabled
-        _ = try? await env.store.execute(UpdatePlan(planID: planID, patch: patch,
-                                                baseRevision: detail.plan.revision))
-        await reload()
-    }
-
     private func delete(_ detail: PlanDetail) async {
         _ = try? await env.store.execute(DeletePlan(planID: planID, baseRevision: detail.plan.revision))
         router.pop()
@@ -392,6 +467,7 @@ public struct PlanDetailScreen: View {
 
     private func reload() async {
         detail = await env.store.planDetail(planID)
+        timelineView = await env.store.planTimeline(planID)
         activities = (await env.store.repository.activities(planID: planID))
             .sorted { $0.happenedAt.sortEpoch > $1.happenedAt.sortEpoch }
         // 默认展开当前阶段

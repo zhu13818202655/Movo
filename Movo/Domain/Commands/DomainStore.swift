@@ -182,13 +182,19 @@ public final class DomainStore {
 
     // MARK: - 撤销（补偿式）
 
-    /// 4.4 undo(batch)：逆序补偿；遇到后续编辑（revision > baseRevision）跳过并列出冲突说明。
+    /// 4.4 undo(batch)：逆序补偿；只允许撤销最近 N 步已应用批次；遇到后续编辑（revision > baseRevision）跳过并列出冲突说明。
     public func undo(batchID: UUID) async throws -> UndoResult {
         guard let batch = await repository.batch(batchID) else {
             throw MovoError.notFound(entityType: .batch, id: batchID)
         }
         if batch.state == .undone {
             return UndoResult(batchId: batchID, undoneOperations: [], unsafeOperations: [], nonUndoableOperations: [])
+        }
+        let allowedSteps = defaults.undoSteps > 0 ? defaults.undoSteps : 5
+        let recentBatches = (await repository.recentBatches(limit: 50)).filter { $0.state == .applied }
+        let eligibleBatches = Array(recentBatches.prefix(allowedSteps))
+        guard eligibleBatches.contains(where: { $0.id == batchID }) else {
+            throw MovoError.invalidStructure(reason: "该批次已超过最近 \(allowedSteps) 步撤销限制，不可再撤销。")
         }
         let operations = await repository.operations(batchID: batchID)
         let stamp = clock.now()
@@ -295,13 +301,31 @@ public final class DomainStore {
         let repo = ctx.repository
         switch op.kind {
         case .createPlan, .createTask, .createStage, .createMetric, .createNote, .logActivity,
-             .recordMeasurement, .createRecurrence:
+             .recordMeasurement:
             // create* → 删除新建对象（30 天内可经最近删除找回）
             let retention = ctx.defaults.lifecycle.tombstoneRetentionDays
             let tombstone = Tombstone(entityType: op.entityType, entityId: op.entityId,
                                       deletedAt: ctx.now, deviceId: ctx.deviceId,
                                       retentionDays: retention)
             _ = try await ctx.write(tombstone, old: nil)
+        case .createRecurrence:
+            let retention = ctx.defaults.lifecycle.tombstoneRetentionDays
+            let tombstone = Tombstone(entityType: op.entityType, entityId: op.entityId,
+                                      deletedAt: ctx.now, deviceId: ctx.deviceId,
+                                      retentionDays: retention)
+            _ = try await ctx.write(tombstone, old: nil)
+            // 任务因这条规则变成了模板，撤销时一并还原
+            try await ReassignTask.undo(operationID: op.id, context: ctx)
+        case .convertSubtasksToSteps:
+            // 先找回同批被移到最近删除的子任务，再还原被转成步骤的任务
+            let tombstoned = Set(await repo.allEvents()
+                .filter { $0.operationId == op.id && $0.entityType == .tombstone }.map(\.entityId))
+            for tombstone in await repo.tombstones(activeOnly: true) where tombstoned.contains(tombstone.id) {
+                var restored = tombstone
+                restored.restoredAt = ctx.now
+                _ = try await ctx.write(restored, old: tombstone)
+            }
+            try await ReassignTask.undo(operationID: op.id, context: ctx)
         case .completeTask:
             if let task = await repo.task(op.entityId) {
                 var t = task
@@ -335,7 +359,7 @@ public final class DomainStore {
         case .reassignTask, .updateTask:
             try await ReassignTask.undo(operationID: op.id, context: ctx)
         case .scheduleTask, .setDeadline, .updatePlan, .updateStage, .updateMetric,
-             .changeRecurrence, .addDependency, .removeDependency,
+             .changeRecurrence, .addDependency, .removeDependency, .toggleOccurrenceStep,
              .pausePlan, .resumePlan:
             // 恢复 patch.old
             try await restoreOldValues(op: op, in: ctx)
@@ -376,6 +400,12 @@ public final class DomainStore {
             if let v = payload["goalText"]?.old.stringValue { plan.goalText = v }
             if let v = payload["cloudAIEnabled"]?.old.boolValue { plan.cloudAIEnabled = v }
             if let v = payload["syncEnabled"]?.old.boolValue { plan.syncEnabled = v }
+            if let patch = payload["startAt"] { plan.startAt = Self.timePoint(from: patch.old) }
+            if let patch = payload["endAt"] { plan.endAt = Self.timePoint(from: patch.old) }
+            // 升级前记录的事件：目标日期就是现在的结束时间
+            if let patch = payload["targetDate"] {
+                plan.endAt = patch.old.isNull ? nil : Self.timePoint(from: .object(["day": patch.old]))
+            }
             if let v = payload["status"]?.old.stringValue, let s = PlanStatus(rawValue: v) { plan.status = s }
             plan.updatedAt = ctx.now
             _ = try await ctx.write(plan, old: existing)
@@ -383,6 +413,7 @@ public final class DomainStore {
             guard let existing = await ctx.repository.task(op.entityId) else { return }
             var values = try JSONDiff.dictionary(existing)
             for (field, patch) in payload where field != "revision" { values[field] = patch.old }
+            LegacyTimeFields.upgrade(&values)
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
             var task = try decoder.decode(Task.self, from: JSONEncoder().encode(values))
@@ -393,6 +424,11 @@ public final class DomainStore {
             var stage = existing
             if let v = payload["status"]?.old.stringValue, let s = StageStatus(rawValue: v) { stage.status = s }
             if let v = payload["name"]?.old.stringValue { stage.name = v }
+            if let patch = payload["startAt"] { stage.startAt = Self.timePoint(from: patch.old) }
+            if let patch = payload["endAt"] { stage.endAt = Self.timePoint(from: patch.old) }
+            if let patch = payload["targetDate"] {
+                stage.endAt = patch.old.isNull ? nil : Self.timePoint(from: .object(["day": patch.old]))
+            }
             _ = try await ctx.write(stage, old: existing)
         case .metric:
             guard let existing = await ctx.repository.metric(op.entityId) else { return }
@@ -413,9 +449,28 @@ public final class DomainStore {
             }
             if let v = payload["weeklyCount"]?.old.intValue { reverted.weeklyCount = v }
             _ = try await ctx.write(reverted, old: existing)
+        case .occurrence:
+            guard let existing = await ctx.repository.occurrence(op.entityId) else { return }
+            var reverted = existing
+            if let patch = payload["steps"] { reverted.steps = Self.occurrenceSteps(from: patch.old) }
+            _ = try await ctx.write(reverted, old: existing)
         default:
             break
         }
+    }
+
+    /// 事件 patch 里的步骤清单还原；空值表示当时还没有勾选过
+    static func occurrenceSteps(from value: JSONValue) -> [OccurrenceStep]? {
+        guard !value.isNull, let data = try? JSONEncoder().encode(value) else { return nil }
+        return try? JSONDecoder().decode([OccurrenceStep].self, from: data)
+    }
+
+    /// 事件 patch 里的时间点还原；空值表示当时没有设置
+    static func timePoint(from value: JSONValue) -> TimePoint? {
+        guard !value.isNull, let data = try? JSONEncoder().encode(value) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try? decoder.decode(TimePoint.self, from: data)
     }
 
     // MARK: - 私有：执行

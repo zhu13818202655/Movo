@@ -113,6 +113,14 @@ targets:
         # 连接局域网内的自建服务需要本地网络访问权限（iOS 14+ / macOS 15+）。
         # 这是独立于 ATS 的另一套机制，公网 IP 不触发，局域网地址会触发。
         NSLocalNetworkUsageDescription: "用于连接你自己部署的模型服务；请求只会发往你在设置里填写的地址。"
+        # 计划文件 .movo.json：系统只按最后一段扩展名识别，所以登记为 JSON 的备选打开方式，
+        # 是否是计划文件由导入页检查内容里的 format 字段。没有自定义 UTType。
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: "Movo 文件"
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - public.json
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.louis.movo

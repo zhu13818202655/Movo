@@ -14,7 +14,8 @@ final class TodoHierarchyTests: XCTestCase {
     private func add(_ title: String, to store: DomainStore, parent: UUID? = nil,
                      plan: UUID? = nil, date: DateOnly? = nil) async throws -> UUID {
         let result = try await store.execute(CreateTask(title: title, planID: plan,
-                                                        parentID: parent, scheduledDate: date))
+                                                        parentID: parent,
+                                                        startAt: date.map { TimePoint.day($0) }))
         return try XCTUnwrap(result.entityID)
     }
 
@@ -228,10 +229,10 @@ final class TodoHierarchyTests: XCTestCase {
         let store = makeStore()
         let date = store.today.adding(days: 3)
         let id = try await add("汇报", to: store, date: date)
-        _ = try await store.execute(ScheduleTask(taskID: id, date: nil))
+        _ = try await store.execute(ScheduleTask(taskID: id, startAt: nil))
         let batch = try XCTUnwrap(store.lastNotification?.batchID)
         _ = try await store.undo(batchID: batch)
         let restored = await store.repository.task(id)
-        XCTAssertEqual(restored?.scheduledDate, date)
+        XCTAssertEqual(restored?.startAt, TimePoint.day(date))
     }
 }

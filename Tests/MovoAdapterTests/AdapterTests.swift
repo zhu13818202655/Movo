@@ -91,8 +91,8 @@ final class AdapterTests: XCTestCase {
             "plan_id": null,
             "stage_id": null,
             "parent_task_id": null,
-            "scheduled_date": "2026-09-30",
-            "hard_deadline": "2026-09-30T07:00:00Z",
+            "start_at": "2026-09-30",
+            "end_at": "2026-09-30T15:00:00+08:00",
             "estimate_minutes": 90,
             "priority": "high",
             "tags": ["工作"],
@@ -101,8 +101,7 @@ final class AdapterTests: XCTestCase {
           "date_interpretation": {
             "raw_text": "明天下午三点前",
             "resolved_date": "2026-09-30",
-            "granularity": "precise",
-            "is_hard_deadline": true
+            "granularity": "precise"
           },
           "confidence": 0.95,
           "needs_confirmation": false
@@ -217,7 +216,7 @@ final class AdapterTests: XCTestCase {
         let system = try XCTUnwrap(messages.first?["content"] as? String)
         XCTAssertTrue(system.contains("JSON Schema"))
         XCTAssertTrue(system.contains("source_span"))
-        XCTAssertTrue(system.contains("scheduled_date"))
+        XCTAssertTrue(system.contains("start_at"))
         XCTAssertTrue(system.contains("create_plan"))
         XCTAssertTrue(system.contains("required"))
         XCTAssertFalse(system.contains("fictional-test-key"))
@@ -253,12 +252,12 @@ final class AdapterTests: XCTestCase {
         XCTAssertEqual(item.action, .createTask)
         XCTAssertEqual(item.span, [0, 10])
         XCTAssertEqual(item.task?.title, "交周报")
-        XCTAssertEqual(item.task?.scheduledDate, "2026-09-30")
-        XCTAssertEqual(item.task?.hardDeadline, "2026-09-30T07:00:00Z")
+        XCTAssertEqual(item.task?.startAt, "2026-09-30")
+        XCTAssertEqual(item.task?.endAt, "2026-09-30T15:00:00+08:00")
         XCTAssertEqual(item.task?.estimateMinutes, 90)
         XCTAssertEqual(item.task?.priority, "high")
         XCTAssertEqual(item.task?.tags, ["工作"])
-        XCTAssertEqual(item.dateInterpretation?.isHardDeadline, true)
+        XCTAssertEqual(item.dateInterpretation?.granularity, "precise")
         XCTAssertEqual(item.needsConfirmation, false)
         XCTAssertTrue(item.extraBlocks.isEmpty, "action 与数据块必须匹配（V2）")
         XCTAssertFalse(item.id.isEmpty)
@@ -324,6 +323,108 @@ final class AdapterTests: XCTestCase {
         XCTAssertEqual(AIProposalCoding.intValue(.string("7")), 7)
         XCTAssertNil(AIProposalCoding.intValue(.null))
         XCTAssertNil(AIProposalCoding.intValue(nil))
+    }
+
+    func testDecodePlanWithStagesAndTasksWithRefs() throws {
+        let json = """
+        {
+          "schema_version": 1,
+          "items": [
+            {
+              "action": "create_plan",
+              "source_span": "建立考研计划",
+              "span": [0, 6],
+              "plan": {
+                "ref": "plan_1",
+                "name": "考研复习",
+                "kind": "delivery",
+                "stages": [
+                  {"ref": "stage_1", "name": "基础阶段", "start_at": "2026-10-01", "end_at": "2026-12-31"}
+                ],
+                "tasks": [
+                  {"ref": "task_1", "title": "背单词", "stage_ref": "stage_1"},
+                  {"ref": "task_2", "title": "复习核心词汇", "parent_ref": "task_1"}
+                ]
+              },
+              "needs_confirmation": true
+            }
+          ]
+        }
+        """
+        let proposal = try XCTUnwrap(AIProposalCoding.decode(json))
+        let plan = try XCTUnwrap(proposal.items.first?.plan)
+        XCTAssertEqual(plan.ref, "plan_1")
+        XCTAssertEqual(plan.stages.count, 1)
+        XCTAssertEqual(plan.stages.first?.ref, "stage_1")
+        XCTAssertEqual(plan.tasks.count, 2)
+        XCTAssertEqual(plan.tasks[0].ref, "task_1")
+        XCTAssertEqual(plan.tasks[0].stageRef, "stage_1")
+        XCTAssertEqual(plan.tasks[1].parentRef, "task_1")
+    }
+
+    func testDecodeTaskWithRecurrenceAndSteps() throws {
+        let json = """
+        {
+          "schema_version": 1,
+          "items": [
+            {
+              "action": "create_task",
+              "source_span": "每天晨跑",
+              "span": [0, 4],
+              "task": {
+                "ref": "task_run",
+                "title": "晨跑",
+                "recurrence": {
+                  "pattern": "daily"
+                },
+                "steps": [
+                  {"ref": "step_1", "title": "热身拉伸"},
+                  {"ref": "step_2", "title": "慢跑 3 公里"}
+                ]
+              },
+              "needs_confirmation": true
+            }
+          ]
+        }
+        """
+        let proposal = try XCTUnwrap(AIProposalCoding.decode(json))
+        let task = try XCTUnwrap(proposal.items.first?.task)
+        XCTAssertEqual(task.ref, "task_run")
+        XCTAssertEqual(task.recurrence?.pattern, "daily")
+        XCTAssertEqual(task.steps.count, 2)
+        XCTAssertEqual(task.steps[0].title, "热身拉伸")
+        XCTAssertEqual(task.steps[1].title, "慢跑 3 公里")
+    }
+
+    func testRequestBodyIncludesStagesParentAndRecurrences() {
+        let plan = AIInput.PlanContext(
+            id: "11111111-1111-1111-1111-111111111111",
+            name: "考研",
+            aliases: [],
+            kind: "delivery",
+            recentTaskTitles: [],
+            stages: [
+                AIInput.StageContext(id: "22222222-2222-2222-2222-222222222222", name: "基础", status: "in_progress")
+            ])
+        let task = AIInput.TaskContext(
+            id: "33333333-3333-3333-3333-333333333333",
+            title: "子待办",
+            planId: "11111111-1111-1111-1111-111111111111",
+            stageId: "22222222-2222-2222-2222-222222222222",
+            parentId: "44444444-4444-4444-4444-444444444444",
+            status: "todo")
+        let rec = AIInput.RecurrenceContext(
+            taskId: "55555555-5555-5555-5555-555555555555",
+            title: "日常习惯",
+            pattern: "daily",
+            stepTitles: ["第一步"])
+
+        let input = AIInput(locale: "zh-Hans", timezone: "Asia/Shanghai", today: "2026-10-06",
+                            text: "测试", plans: [plan], tasks: [task], recurrences: [rec], instructions: "")
+        let jsonStr = input.requestBodyJSONString()
+        XCTAssertTrue(jsonStr.contains("stages"))
+        XCTAssertTrue(jsonStr.contains("parent_id"))
+        XCTAssertTrue(jsonStr.contains("recurrences"))
     }
 
     // MARK: - 8.6 传输层：状态码与重试策略

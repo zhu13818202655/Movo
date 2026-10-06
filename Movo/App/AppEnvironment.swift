@@ -59,6 +59,22 @@ public final class AppEnvironment {
 
     // MARK: AI 选择（8.5）
 
+    /// 全局 AI 开关
+    public var globalAIEnabled: Bool {
+        didSet {
+            guard oldValue != globalAIEnabled else { return }
+            persistAISettings()
+        }
+    }
+
+    /// 隐私告知状态（开启 AI 或首次使用时已告知）
+    public var hasShownPrivacyNotice: Bool {
+        didSet {
+            guard oldValue != hasShownPrivacyNotice else { return }
+            persistAISettings()
+        }
+    }
+
     /// 当前厂商：内置 DeepSeek 或用户自定义（OpenAI 兼容）。切换后自动回落该厂商默认模型。
     public var vendor: AIVendor {
         didSet {
@@ -96,6 +112,8 @@ public final class AppEnvironment {
     public var lastPreparation: ProposalPreparation?
     /// 最近一次错误（统一横幅渲染）
     public var lastError: MovoError?
+    /// 系统「用 Movo 打开」传来的计划文件，由导入页读取后清空
+    public var pendingImportURL: URL?
     /// AI 调用用量（8.8：只记录元数据，不含任何正文）
     public var usageLog: [AIUsageRecord] = []
 
@@ -148,6 +166,8 @@ public final class AppEnvironment {
         }
 
         let saved = aiSettingsStore.load()
+        self.globalAIEnabled = saved.globalAIEnabled
+        self.hasShownPrivacyNotice = saved.hasShownPrivacyNotice
         let resolvedVendor = vendor ?? saved.vendor
         self.vendor = resolvedVendor
         self.customProvider = saved.custom
@@ -177,7 +197,9 @@ public final class AppEnvironment {
     }
 
     private func persistAISettings() {
-        aiSettingsStore.save(AISettings(vendor: vendor, model: model, custom: customProvider))
+        aiSettingsStore.save(AISettings(globalAIEnabled: globalAIEnabled,
+                                        hasShownPrivacyNotice: hasShownPrivacyNotice,
+                                        vendor: vendor, model: model, custom: customProvider))
     }
 
     // MARK: - 同步与通知（P3 / T0.12）
@@ -461,7 +483,7 @@ public final class AppEnvironment {
         do {
             let result = try await store.execute(CreateTask(
                 title: trimmed,
-                scheduledDate: scheduledToday ? store.today : nil,
+                startAt: scheduledToday ? TimePoint.day(store.today) : nil,
                 source: .manual))
             lastBatchNotice = store.lastNotification
             return result.entityID

@@ -39,7 +39,19 @@ public struct RootView: View {
             MovoDeepLink.apply(link, router: router)
             env.notificationRouter.clear()
         }
-        .onOpenURL { url in MovoDeepLink.apply(url: url, router: router) }
+        .onOpenURL { url in
+            if url.isFileURL {
+                env.pendingImportURL = url
+                router.present(.importPlan)
+            } else {
+                MovoDeepLink.apply(url: url, router: router)
+            }
+        }
+        #if os(macOS)
+        .onReceive(NotificationCenter.default.publisher(for: .movoImportPlan)) { _ in
+            router.present(.importPlan)
+        }
+        #endif
         // 数据变更 → 1s 静默后重排通知（幂等覆盖）并触发同步；id 变化自动取消上一次
         .task(id: env.store.dataVersion) {
             guard env.store.dataVersion > 0 else { return }

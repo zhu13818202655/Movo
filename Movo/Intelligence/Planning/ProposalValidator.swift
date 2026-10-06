@@ -14,23 +14,35 @@ import Foundation
 public struct PendingProposal: Identifiable, Sendable {
 
     public enum Kind: String, Sendable, CaseIterable {
+        case taskCreation
+        case planCreation
         case deadlineChange
         case recurrenceChange
         case dependencySuggestion
         case measurementUnitUnclear
         case classificationAmbiguous
         case bulkChange
-        case planCreation
+        case noteCreation
+        case activityLog
+        case taskCompletion
+        case taskSchedule
+        case taskUpdate
 
         public var displayName: String {
             switch self {
-            case .deadlineChange: "修改硬截止"
+            case .taskCreation: "新增待办"
+            case .planCreation: "新建计划"
+            case .deadlineChange: "修改结束时间"
             case .recurrenceChange: "调整频率"
             case .dependencySuggestion: "先后顺序建议"
             case .measurementUnitUnclear: "结果单位待确认"
             case .classificationAmbiguous: "归属待确认"
             case .bulkChange: "批量改动"
-            case .planCreation: "新建计划"
+            case .noteCreation: "保存想法"
+            case .activityLog: "记录行动"
+            case .taskCompletion: "标记完成"
+            case .taskSchedule: "安排日期"
+            case .taskUpdate: "修改待办"
             }
         }
     }
@@ -145,15 +157,104 @@ public enum ProposalValidator {
             truncationNotice = "这次内容较多，先处理前 \(items.count) 项，另有 \(dropped) 项已放进收件箱。"
         }
 
+        // MARK: 批内临时引用与结构前置扫描
+        var declaredPlanRefs: Set<String> = []
+        var declaredStageRefs: [String: String] = [:] // stageRef -> planRef
+        var declaredTaskRefs: Set<String> = []
+        var allDeclaredRefs: Set<String> = []
+        var duplicateRefs: Set<String> = []
+        var parentRefs: [String: String] = [:] // childRef -> parentRef
+        var recurrenceRefs: Set<String> = []
+
+        func registerRef(_ raw: String?) {
+            guard let raw, !raw.isEmpty else { return }
+            if !allDeclaredRefs.insert(raw).inserted {
+                duplicateRefs.insert(raw)
+            }
+        }
+
+        for item in items {
+            if let p = item.plan {
+                registerRef(p.ref)
+                if let pr = p.ref { declaredPlanRefs.insert(pr) }
+                for s in p.stages {
+                    registerRef(s.ref)
+                    if let sr = s.ref { declaredStageRefs[sr] = p.ref ?? "" }
+                }
+                for t in p.tasks {
+                    registerRef(t.ref)
+                    if let tr = t.ref {
+                        declaredTaskRefs.insert(tr)
+                        if let pr = t.parentRef { parentRefs[tr] = pr }
+                        if t.recurrence != nil { recurrenceRefs.insert(tr) }
+                    }
+                    for step in t.steps {
+                        registerRef(step.ref)
+                        if let sr = step.ref, let pr = step.parentRef { parentRefs[sr] = pr }
+                    }
+                }
+            }
+            if item.action == .createTask, let t = item.task {
+                registerRef(t.ref)
+                if let tr = t.ref {
+                    declaredTaskRefs.insert(tr)
+                    if let pr = t.parentRef { parentRefs[tr] = pr }
+                    if t.recurrence != nil || item.recurrence != nil { recurrenceRefs.insert(tr) }
+                }
+                for step in t.steps {
+                    registerRef(step.ref)
+                    if let sr = step.ref, let pr = step.parentRef { parentRefs[sr] = pr }
+                }
+            }
+        }
+
+        if !duplicateRefs.isEmpty {
+            issues.append(ProposalIssue(
+                itemID: items.first?.id ?? "batch",
+                sourceSpan: nil,
+                reasons: [.structureViolation("批内临时引用 ref 重复定义：\(duplicateRefs.joined(separator: ", "))")]))
+        }
+
+        for (child, parent) in parentRefs {
+            let isParentKnown = allDeclaredRefs.contains(parent)
+                || (UUID(uuidString: parent).map { input.allowedTaskIDs.contains($0) } ?? false)
+            if !isParentKnown {
+                issues.append(ProposalIssue(
+                    itemID: child, sourceSpan: nil,
+                    reasons: [.unknownReference(parent)]))
+            }
+            // 环检测
+            var visited = Set<String>()
+            var curr: String? = parent
+            while let c = curr {
+                if c == child {
+                    issues.append(ProposalIssue(
+                        itemID: child, sourceSpan: nil,
+                        reasons: [.structureViolation("任务父子关系存在循环引用：\(child) 与 \(parent)")]))
+                    break
+                }
+                if !visited.insert(c).inserted { break }
+                curr = parentRefs[c]
+            }
+        }
+
+        for rec in recurrenceRefs {
+            if parentRefs[rec] != nil {
+                issues.append(ProposalIssue(
+                    itemID: rec, sourceSpan: nil,
+                    reasons: [.structureViolation("重复任务模板不能放在其它待办下面")]))
+            }
+            for (child, parent) in parentRefs where parent == rec {
+                if !declaredTaskRefs.contains(child) { continue }
+                issues.append(ProposalIssue(
+                    itemID: child, sourceSpan: nil,
+                    reasons: [.structureViolation("重复任务模板不能包含普通子任务，只能包含步骤")]))
+            }
+        }
+
         var dedupKeys: Set<String> = []
 
         for var item in items {
-            let commandStart = commands.count
-            defer {
-                for (index, command) in commands.dropFirst(commandStart).enumerated() {
-                    commandKeys[command.operationID] = "\(item.action.rawValue)|\(item.id)|\(item.task?.title ?? "")|\(index)"
-                }
-            }
             // 模型容易算错中文/emoji 偏移；只有原文片段唯一精确命中时才修正。
             if let source = item.sourceSpan, !source.isEmpty,
                let range = input.text.range(of: source),
@@ -192,7 +293,8 @@ public enum ProposalValidator {
             // MARK: V11 同批去重
             var dedupKey = item.action.rawValue + "|" + spanText.trimmingCharacters(in: .whitespacesAndNewlines)
             if let target = item.task?.candidateTaskId { dedupKey += "|" + target }
-            if let scheduled = item.task?.scheduledDate { dedupKey += "|" + scheduled }
+            if let start = item.task?.startAt { dedupKey += "|" + start }
+            if let end = item.task?.endAt { dedupKey += "|" + end }
             if let title = item.task?.title { dedupKey += "|" + title }
             if let name = item.plan?.name { dedupKey += "|" + name }
             guard dedupKeys.insert(dedupKey).inserted else {
@@ -216,10 +318,16 @@ public enum ProposalValidator {
                                                 reasons: [.structureViolation("计划名称无效")]))
                     continue
                 }
-                if let date = plan.targetDate,
-                   DateOnly(iso8601DateString: date, sourceTZ: timeZone.identifier) == nil {
+                let planStart = Self.parseTime(plan.startAt, timeZone: timeZone)
+                let planEnd = Self.parseTime(plan.endAt, timeZone: timeZone)
+                guard planStart.isValid, planEnd.isValid else {
                     issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
                                                 reasons: [.unparsableDate]))
+                    continue
+                }
+                if let s = planStart.point, let e = planEnd.point, e.isEarlier(than: s) {
+                    issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                reasons: [.structureViolation("计划的结束时间早于开始时间")]))
                     continue
                 }
                 guard plan.tasks.count <= defaults.ai.maxItemsPerInput else {
@@ -227,65 +335,92 @@ public enum ProposalValidator {
                                                 reasons: [.structureViolation("计划待办过多，请分次整理")]))
                     continue
                 }
-                var taskIssues: [ProposalIssue] = []
-                for task in plan.tasks {
-                    guard task.planId == nil, task.stageId == nil, task.parentTaskId == nil,
-                          task.candidateTaskId == nil, task.dependencyIds.isEmpty,
-                          (task.title?.count ?? 0) <= Task.maxTitleLength,
-                          !(task.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                        taskIssues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
-                                                        reasons: [.structureViolation("计划待办缺少标题或引用了未经确认的结构")]))
+
+                var stageIssues: [ProposalIssue] = []
+                for stage in plan.stages {
+                    do { try StructurePolicy.validateStageName(stage.name) }
+                    catch {
+                        stageIssues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                         reasons: [.structureViolation("阶段名称无效")]))
+                    }
+                    let sStart = Self.parseTime(stage.startAt, timeZone: timeZone)
+                    let sEnd = Self.parseTime(stage.endAt, timeZone: timeZone)
+                    guard sStart.isValid, sEnd.isValid else {
+                        stageIssues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                         reasons: [.unparsableDate]))
                         continue
                     }
-                    let child = AIProposalItem(sourceSpan: item.sourceSpan, span: item.span,
-                                               action: .createTask, task: task, confidence: item.confidence)
-                    let checked = validate(proposal: AIProposal(items: [child]), input: input,
-                                           plans: plans, tasks: tasks, metrics: metrics, occurrences: occurrences,
-                                           today: today, timeZone: timeZone, defaults: defaults,
-                                           deviceId: deviceId, captureID: captureID, source: source)
-                    taskIssues += checked.issues
+                    if let s = sStart.point, let e = sEnd.point, e.isEarlier(than: s) {
+                        stageIssues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                         reasons: [.structureViolation("阶段结束时间早于开始时间")]))
+                    }
+                    if let s = sStart.point, let ps = planStart.point, s.isEarlier(than: ps) {
+                        stageIssues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                         reasons: [.structureViolation("阶段时间早于计划开始时间")]))
+                    }
+                    if let e = sEnd.point, let pe = planEnd.point, pe.isEarlier(than: e) {
+                        stageIssues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                         reasons: [.structureViolation("阶段时间晚于计划结束时间")]))
+                    }
+                }
+                guard stageIssues.isEmpty else { issues += stageIssues; continue }
+
+                var taskIssues: [ProposalIssue] = []
+                for task in plan.tasks {
+                    let title = (task.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !title.isEmpty, title.count <= Task.maxTitleLength else {
+                        taskIssues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                        reasons: [.structureViolation("计划待办缺少有效标题")]))
+                        continue
+                    }
+                    let tStart = Self.parseTime(task.startAt, timeZone: timeZone)
+                    let tEnd = Self.parseTime(task.endAt, timeZone: timeZone)
+                    guard tStart.isValid, tEnd.isValid else {
+                        taskIssues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                        reasons: [.unparsableDate]))
+                        continue
+                    }
+                    if let s = tStart.point, let e = tEnd.point, e.isEarlier(than: s) {
+                        taskIssues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                        reasons: [.structureViolation("待办结束时间早于开始时间")]))
+                    }
+                    if let s = tStart.point, let ps = planStart.point, s.isEarlier(than: ps) {
+                        taskIssues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                        reasons: [.structureViolation("待办时间早于计划开始时间")]))
+                    }
+                    if let e = tEnd.point, let pe = planEnd.point, pe.isEarlier(than: e) {
+                        taskIssues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                        reasons: [.structureViolation("待办时间晚于计划结束时间")]))
+                    }
                 }
                 guard taskIssues.isEmpty else { issues += taskIssues; continue }
+
                 var lines = [ImpactPreview.ImpactLine(entityId: UUID(), title: "计划类型", changeText: plan.kind.displayName)]
                 if let goal = plan.goal { lines.append(.init(entityId: UUID(), title: "目标", changeText: goal)) }
-                if let date = plan.targetDate { lines.append(.init(entityId: UUID(), title: "目标日期", changeText: date)) }
+                if let date = plan.startAt { lines.append(.init(entityId: UUID(), title: "开始时间", changeText: date)) }
+                if let date = plan.endAt { lines.append(.init(entityId: UUID(), title: "结束时间", changeText: date)) }
+                for stage in plan.stages {
+                    lines.append(.init(entityId: UUID(), title: "包含阶段", changeText: stage.name))
+                }
                 lines += plan.tasks.map { task in
-                    let details = [task.scheduledDate.map { "安排 \($0)" },
-                                   task.hardDeadline.map { "硬截止 \($0)" }, task.notes].compactMap { $0 }
+                    let details = [task.startAt.map { "开始 \($0)" },
+                                   task.endAt.map { "结束 \($0)" }, task.notes].compactMap { $0 }
                     return .init(entityId: UUID(), title: "新增：\(task.title ?? "")",
                                  changeText: details.isEmpty ? "未安排" : details.joined(separator: " · "))
                 }
                 needsConfirmation.append(PendingProposal(id: item.id, item: item,
-                                                          affectedSummary: plan.name,
-                                                          changeSummary: lines, kind: .planCreation))
+                                                         affectedSummary: plan.name,
+                                                         changeSummary: lines, kind: .planCreation))
 
-            // MARK: needs_clarification → 收件箱补充信息
+            // MARK: needs_clarification
             case .needsClarification:
                 issues.append(ProposalIssue(
                     itemID: item.id, sourceSpan: item.sourceSpan,
                     reasons: [.structureViolation(item.clarificationQuestion ?? "这条信息不足，需要你补充说明")],
-                    suggestedAction: "去收件箱补充说明"))
+                    suggestedAction: "补充说明后可重新整理"))
 
             // MARK: create_task
             case .createTask:
-                if let stageID = spec?.stageId, !stageID.isEmpty {
-                    issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
-                                                reasons: [.unknownReference(stageID)],
-                                                suggestedAction: "先创建待办，再从详情选择阶段。"))
-                    continue
-                }
-                if let rawParent = spec?.parentTaskId, !rawParent.isEmpty,
-                   !(UUID(uuidString: rawParent).map { input.allowedTaskIDs.contains($0) } ?? false) {
-                    issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
-                                                reasons: [.unknownReference(rawParent)]))
-                    continue
-                }
-                if !(spec?.dependencyIds.isEmpty ?? true) {
-                    issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
-                                                reasons: [.structureViolation("新待办的前置关系需要单独确认")],
-                                                suggestedAction: "先创建待办，再在详情设置前置任务。"))
-                    continue
-                }
                 let rawTitle = (spec?.title ?? spanText).trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !rawTitle.isEmpty else {
                     issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
@@ -301,98 +436,79 @@ public enum ProposalValidator {
                 var planID: UUID?
                 if let raw = spec?.planId, !raw.isEmpty {
                     guard let uuid = UUID(uuidString: raw) else {
-                        issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
-                                                    reasons: [.unknownReference(raw)]))
-                        continue
+                        if !declaredPlanRefs.contains(raw) {
+                            issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                        reasons: [.unknownReference(raw)]))
+                            continue
+                        }
+                        planID = nil
                     }
-                    guard input.allowedPlanIDs.contains(uuid), planByID[uuid] != nil else {
-                        // 未允许云处理的计划：整条进收件箱（不使用、不转发）
-                        issues.append(ProposalIssue(
-                            itemID: item.id, sourceSpan: item.sourceSpan,
-                            reasons: [.planNotCloudAIEnabled],
-                            suggestedAction: "这段内容只在你的设备上处理，可以手动归类。"))
-                        continue
-                    }
-                    if planByID[uuid]?.status == .archived {
-                        issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
-                                                    reasons: [.planArchived]))
-                        continue
-                    }
-                    planID = uuid
-                }
-
-                var scheduled: DateOnly?
-                if let raw = spec?.scheduledDate, !raw.isEmpty {
-                    guard let day = DateOnly(iso8601DateString: Self.dayPrefix(raw), sourceTZ: timeZone.identifier) else {
-                        issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
-                                                    reasons: [.unparsableDate]))
-                        continue
-                    }
-                    if day < today {
-                        corrections.append("「\(raw)」早于今天，安排日期已改为今天。")
-                        scheduled = today
-                    } else {
-                        scheduled = day
+                    if let uuid {
+                        guard input.allowedPlanIDs.contains(uuid), planByID[uuid] != nil else {
+                            issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                        reasons: [.unknownReference(raw)]))
+                            continue
+                        }
+                        if planByID[uuid]?.status == .archived {
+                            issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                        reasons: [.planArchived]))
+                            continue
+                        }
+                        planID = uuid
                     }
                 }
 
-                var deadline: DateTimeTZ?
-                if let raw = spec?.hardDeadline, !raw.isEmpty {
-                    if item.dateInterpretation?.isHardDeadline == false {
+                if let stageID = spec?.stageId, !stageID.isEmpty {
+                    guard let sUUID = UUID(uuidString: stageID), input.allowedStageIDs.contains(sUUID) else {
                         issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
-                                                    reasons: [.deadlineNotAllowed]))
+                                                    reasons: [.unknownReference(stageID)]))
                         continue
                     }
-                    guard let parsed = parseDeadline(raw, fallbackTZ: timeZone) else {
+                }
+
+                if let rawParent = spec?.parentTaskId, !rawParent.isEmpty {
+                    guard let pUUID = UUID(uuidString: rawParent), input.allowedTaskIDs.contains(pUUID) else {
                         issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
-                                                    reasons: [.deadlineNeedsTimeAndZone]))
+                                                    reasons: [.unknownReference(rawParent)]))
                         continue
                     }
-                    deadline = parsed
                 }
 
-                let context = ExecutionContext(confidence: item.confidence,
-                                               candidateMatchCount: planID == nil ? 0 : 1,
-                                               autoClassificationConfidence: defaults.ai.classificationConfidenceThreshold,
-                                               autoClassificationMargin: defaults.ai.classificationMarginThreshold)
-                if planID != nil, !ExecutionPolicy.allowsAutoClassification(context) {
-                    planID = nil
-                    item.task?.planId = nil
-                    item.task?.stageId = nil
-                    item.task?.parentTaskId = nil
-                    corrections.append("「\(title)」已保存为独立待办，可以稍后选择计划。")
-                }
-                let decision = planID == nil ? ExecutionDecision.auto : ExecutionPolicy.decide(for: item.action, context: context)
-
-                switch decision {
-                case .auto:
-                    commands.append(CreateTask(
-                        title: title,
-                        planID: planID,
-                        stageID: planID == nil ? nil : spec?.stageId.flatMap { UUID(uuidString: $0) },
-                        parentID: planID == nil ? nil : spec?.parentTaskId.flatMap { UUID(uuidString: $0) },
-                        notes: spec?.notes,
-                        scheduledDate: scheduled,
-                        deadline: deadline,
-                        estimateMinutes: spec?.estimateMinutes,
-                        priority: spec?.priority.flatMap { TaskPriority(rawValue: normalizePriority($0)) },
-                        tags: spec?.tags ?? [],
-                        dependencyIDs: (spec?.dependencyIds ?? []).compactMap { UUID(uuidString: $0) },
-                        recurrence: nil,
-                        source: source,
-                        captureID: captureID,
-                        suggestedFields: spec.map { suggestedFields(for: item, taskSpec: $0) } ?? []))
-                case .bulkPreview, .confirm, .inboxSuggestion:
-                    needsConfirmation.append(PendingProposal(
-                        id: item.id, item: item, affectedSummary: title,
-                        changeSummary: [ImpactPreview.ImpactLine(
-                            entityId: planID ?? UUID(), title: title,
-                            changeText: planID == nil ? "归属还不确定，先放进收件箱" : "新增待办，待你确认")],
-                        kind: .classificationAmbiguous))
-                case .reject:
+                let parsedStart = Self.parseTime(spec?.startAt, timeZone: timeZone)
+                let parsedEnd = Self.parseTime(spec?.endAt, timeZone: timeZone)
+                guard parsedStart.isValid, parsedEnd.isValid else {
                     issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
-                                                reasons: [.emptyTitle]))
+                                                reasons: [.unparsableDate]))
+                    continue
                 }
+                var startAt = parsedStart.point
+                let endAt = parsedEnd.point
+                if let start = startAt, start.dateOnly < today {
+                    corrections.append("开始时间早于今天，已改为今天。")
+                    startAt = .day(today)
+                }
+                if let start = startAt, let end = endAt, end.isEarlier(than: start) {
+                    issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                reasons: [.structureViolation("结束时间早于开始时间")]))
+                    continue
+                }
+
+                var changeLines: [ImpactPreview.ImpactLine] = []
+                let details = [startAt.map { "开始 \($0.displayString)" },
+                               endAt.map { "结束 \($0.displayString)" }, spec?.notes].compactMap { $0 }
+                let subText = details.isEmpty ? "未安排时间" : details.joined(separator: " · ")
+                changeLines.append(ImpactPreview.ImpactLine(entityId: planID ?? UUID(), title: title, changeText: subText))
+                if let rec = spec?.recurrence ?? item.recurrence, let p = rec.pattern {
+                    changeLines.append(ImpactPreview.ImpactLine(entityId: UUID(), title: "重复", changeText: p))
+                }
+                for step in (spec?.steps ?? []) {
+                    changeLines.append(ImpactPreview.ImpactLine(entityId: UUID(), title: "步骤", changeText: step.title))
+                }
+
+                needsConfirmation.append(PendingProposal(
+                    id: item.id, item: item, affectedSummary: title,
+                    changeSummary: changeLines,
+                    kind: .taskCreation))
 
             // MARK: schedule_existing_task
             case .scheduleExistingTask:
@@ -402,29 +518,26 @@ public enum ProposalValidator {
                                                 reasons: [.requiresCandidateTask]))
                     continue
                 }
-                var day = today
-                if let rawDate = spec?.scheduledDate, !rawDate.isEmpty {
-                    guard let parsed = DateOnly(iso8601DateString: Self.dayPrefix(rawDate),
-                                                sourceTZ: timeZone.identifier) else {
-                        issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
-                                                    reasons: [.unparsableDate]))
-                        continue
-                    }
-                    if parsed < today {
-                        corrections.append("安排日期早于今天，已改为今天。")
-                        day = today
-                    } else {
-                        day = parsed
-                    }
-                }
-                let context = ExecutionContext(confidence: item.confidence, candidateMatchCount: 1)
-                switch ExecutionPolicy.decide(for: item.action, context: context) {
-                case .auto:
-                    commands.append(ScheduleTask(taskID: taskID, date: day, baseRevision: task.revision))
-                default:
+                var start: TimePoint = .day(today)
+                let parsedStart = Self.parseTime(spec?.startAt, timeZone: timeZone)
+                guard parsedStart.isValid else {
                     issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
                                                 reasons: [.unparsableDate]))
+                    continue
                 }
+                if let parsed = parsedStart.point {
+                    if parsed.dateOnly < today {
+                        corrections.append("开始时间早于今天，已改为今天。")
+                    } else {
+                        start = parsed
+                    }
+                }
+                needsConfirmation.append(PendingProposal(
+                    id: item.id, item: item, affectedSummary: task.title,
+                    changeSummary: [ImpactPreview.ImpactLine(
+                        entityId: taskID, title: task.title,
+                        changeText: "安排到 \(start.displayString)")],
+                    kind: .taskSchedule))
 
             // MARK: update_task
             case .updateTask:
@@ -435,86 +548,67 @@ public enum ProposalValidator {
                     continue
                 }
 
-                var deadline: DateTimeTZ?
-                if let rawDeadline = spec?.hardDeadline, !rawDeadline.isEmpty {
-                    if item.dateInterpretation?.isHardDeadline == false {
-                        issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
-                                                    reasons: [.deadlineNotAllowed]))
-                        continue
-                    }
-                    guard let parsed = parseDeadline(rawDeadline, fallbackTZ: timeZone) else {
-                        issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
-                                                    reasons: [.deadlineNeedsTimeAndZone]))
-                        continue
-                    }
-                    deadline = parsed
-                }
-
-                var scheduled: DateOnly?
-                if let rawDate = spec?.scheduledDate, !rawDate.isEmpty {
-                    guard let parsed = DateOnly(iso8601DateString: Self.dayPrefix(rawDate),
-                                                sourceTZ: timeZone.identifier) else {
-                        issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
-                                                    reasons: [.unparsableDate]))
-                        continue
-                    }
-                    if parsed < today {
-                        corrections.append("安排日期早于今天，已改为今天。")
-                        scheduled = today
-                    } else {
-                        scheduled = parsed
-                    }
-                }
-
-                let context = ExecutionContext(confidence: item.confidence,
-                                               candidateMatchCount: 1,
-                                               changesHardDeadline: deadline != nil)
-                switch ExecutionPolicy.decide(for: item.action, context: context) {
-                case .auto:
-                    var patch = TaskPatch()
-                    if let rawTitle = spec?.title {
-                        let trimmed = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if !trimmed.isEmpty {
-                            patch.title = trimmed.count > Task.maxTitleLength
-                                ? String(trimmed.prefix(Task.maxTitleLength)) : trimmed
-                        }
-                    }
-                    if let notes = spec?.notes { patch.notes = notes }
-                    if let scheduled { patch.scheduledDate = scheduled }
-                    if let priority = spec?.priority,
-                       let parsed = TaskPriority(rawValue: normalizePriority(priority)) {
-                        patch.priority = parsed
-                    }
-                    if let estimate = spec?.estimateMinutes { patch.estimateMinutes = estimate }
-                    if let tags = spec?.tags, !tags.isEmpty { patch.tags = tags }
-                    if let stage = spec?.stageId.flatMap({ UUID(uuidString: $0) }) { patch.stageID = stage }
-                    if let rawPlan = spec?.planId, let planUUID = UUID(uuidString: rawPlan) {
-                        guard input.allowedPlanIDs.contains(planUUID) else {
-                            issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
-                                                        reasons: [.unknownReference(rawPlan)]))
-                            continue
-                        }
-                        patch.planID = planUUID
-                    }
-                    guard !patch.isEmpty else {
-                        issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
-                                                    reasons: [.mismatchedDataBlock],
-                                                    suggestedAction: "这条没有需要修改的字段。"))
-                        continue
-                    }
-                    commands.append(UpdateTask(taskID: taskID, patch: patch, baseRevision: task.revision))
-                case .confirm, .bulkPreview:
-                    needsConfirmation.append(PendingProposal(
-                        id: item.id, item: item, affectedSummary: task.title,
-                        changeSummary: [ImpactPreview.ImpactLine(
-                            entityId: taskID, title: task.title, changeText: "修改硬截止",
-                            oldValue: task.hardDeadline?.displayString,
-                            newValue: deadline?.displayString)],
-                        kind: .deadlineChange))
-                default:
+                let parsedEnd = Self.parseTime(spec?.endAt, timeZone: timeZone)
+                guard parsedEnd.isValid else {
                     issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
-                                                reasons: [.requiresCandidateTask]))
+                                                reasons: [.unparsableDate]))
+                    continue
                 }
+                let endAt = parsedEnd.point
+
+                let parsedStart = Self.parseTime(spec?.startAt, timeZone: timeZone)
+                guard parsedStart.isValid else {
+                    issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                reasons: [.unparsableDate]))
+                    continue
+                }
+                var startAt = parsedStart.point
+                if let start = startAt, start.dateOnly < today {
+                    corrections.append("开始时间早于今天，已改为今天。")
+                    startAt = .day(today)
+                }
+
+                var patch = TaskPatch()
+                if let rawTitle = spec?.title {
+                    let trimmed = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty {
+                        patch.title = trimmed.count > Task.maxTitleLength
+                            ? String(trimmed.prefix(Task.maxTitleLength)) : trimmed
+                    }
+                }
+                if let notes = spec?.notes { patch.notes = notes }
+                if let startAt { patch.startAt = startAt }
+                if let endAt { patch.endAt = endAt }
+                if let priority = spec?.priority,
+                   let parsed = TaskPriority(rawValue: normalizePriority(priority)) {
+                    patch.priority = parsed
+                }
+                if let estimate = spec?.estimateMinutes { patch.estimateMinutes = estimate }
+                if let tags = spec?.tags, !tags.isEmpty { patch.tags = tags }
+                if let stage = spec?.stageId.flatMap({ UUID(uuidString: $0) }) { patch.stageID = stage }
+                if let rawPlan = spec?.planId, let planUUID = UUID(uuidString: rawPlan) {
+                    guard input.allowedPlanIDs.contains(planUUID) else {
+                        issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                    reasons: [.unknownReference(rawPlan)]))
+                        continue
+                    }
+                    patch.planID = planUUID
+                }
+                guard !patch.isEmpty else {
+                    issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                reasons: [.mismatchedDataBlock],
+                                                suggestedAction: "这条没有需要修改的字段。"))
+                    continue
+                }
+
+                needsConfirmation.append(PendingProposal(
+                    id: item.id, item: item, affectedSummary: task.title,
+                    changeSummary: [ImpactPreview.ImpactLine(
+                        entityId: taskID, title: task.title,
+                        changeText: "修改待办信息",
+                        oldValue: task.endAt?.displayString,
+                        newValue: endAt?.displayString)],
+                    kind: endAt != nil ? .deadlineChange : .taskUpdate))
 
             // MARK: complete_task
             case .completeTask:
@@ -534,27 +628,13 @@ public enum ProposalValidator {
                                                 reasons: [.unknownReference(raw)]))
                     continue
                 }
-                let at: TimeValue = .day(resolvedDay(item: item, spec: spec, today: today,
-                                                     timeZone: timeZone) ?? today)
-                if task.isTemplate {
-                    let pending = occurrences.values.filter {
-                        $0.taskId == taskID && $0.status == .pending
-                            && input.allowedOccurrenceIDs.contains($0.id)
-                    }
-                    guard pending.count == 1, let occurrence = pending.first else {
-                        issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
-                                                    reasons: [.templateNeedsOccurrence],
-                                                    suggestedAction: "请选择要完成的具体某一次。"))
-                        continue
-                    }
-                    commands.append(CompleteOccurrence(occurrenceID: occurrence.id, at: at,
-                                                       baseRevision: occurrence.revision))
-                } else {
-                    commands.append(CompleteTask(taskID: taskID, at: at,
-                                                 baseRevision: task.revision, reason: item.reason))
-                }
+                needsConfirmation.append(PendingProposal(
+                    id: item.id, item: item, affectedSummary: task.title,
+                    changeSummary: [ImpactPreview.ImpactLine(
+                        entityId: taskID, title: task.title, changeText: "标记完成")],
+                    kind: .taskCompletion))
 
-            // MARK: match_occurrence（唯一匹配既有任务/实例，避免重复新建）
+            // MARK: match_occurrence
             case .matchOccurrence:
                 guard let raw = spec?.candidateTaskId, let taskID = UUID(uuidString: raw),
                       input.allowedTaskIDs.contains(taskID), let task = tasks[taskID] else {
@@ -564,20 +644,19 @@ public enum ProposalValidator {
                 }
                 let day = resolvedDay(item: item, spec: spec, today: today, timeZone: timeZone) ?? today
                 if task.isTemplate {
-                    let pending = occurrences.values.filter {
-                        $0.taskId == taskID && $0.status == .pending
-                            && input.allowedOccurrenceIDs.contains($0.id)
-                    }
-                    guard pending.count == 1, let occurrence = pending.first else {
-                        issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
-                                                    reasons: [.templateNeedsOccurrence],
-                                                    suggestedAction: "请选择要处理的具体某一次。"))
-                        continue
-                    }
-                    commands.append(CompleteOccurrence(occurrenceID: occurrence.id, at: .day(day),
-                                                       baseRevision: occurrence.revision))
+                    needsConfirmation.append(PendingProposal(
+                        id: item.id, item: item, affectedSummary: task.title,
+                        changeSummary: [ImpactPreview.ImpactLine(
+                            entityId: taskID, title: task.title,
+                            changeText: "完成 \(day.iso8601DateString) 的执行实例")],
+                        kind: .taskCompletion))
                 } else {
-                    commands.append(ScheduleTask(taskID: taskID, date: day, baseRevision: task.revision))
+                    needsConfirmation.append(PendingProposal(
+                        id: item.id, item: item, affectedSummary: task.title,
+                        changeSummary: [ImpactPreview.ImpactLine(
+                            entityId: taskID, title: task.title,
+                            changeText: "安排到 \(day.iso8601DateString)")],
+                        kind: .taskSchedule))
                 }
 
             // MARK: log_activity
@@ -587,28 +666,16 @@ public enum ProposalValidator {
                     issues.append(ProposalIssue(
                         itemID: item.id, sourceSpan: item.sourceSpan,
                         reasons: [.requiresCandidateTask],
-                        suggestedAction: "去收件箱补充这条记录属于哪个计划。"))
+                        suggestedAction: "去补充这条记录属于哪个计划。"))
                     continue
                 }
-                var taskID: UUID?
-                if let raw = spec?.candidateTaskId, let id = UUID(uuidString: raw),
-                   input.allowedTaskIDs.contains(id) {
-                    taskID = id
-                }
-                let day = resolvedDay(item: item, spec: spec, today: today, timeZone: timeZone) ?? today
-                let context = ExecutionContext(confidence: item.confidence, candidateMatchCount: 1)
-                switch ExecutionPolicy.decide(for: item.action, context: context) {
-                case .auto:
-                    commands.append(LogActivity(
-                        planID: planID, taskID: taskID, occurrenceID: nil,
-                        happenedAt: .day(day), durationMinutes: nil,
-                        text: item.note?.text ?? spanText, source: source))
-                default:
-                    issues.append(ProposalIssue(
-                        itemID: item.id, sourceSpan: item.sourceSpan,
-                        reasons: [.requiresCandidateTask],
-                        suggestedAction: "去收件箱确认这条记录的归属。"))
-                }
+                needsConfirmation.append(PendingProposal(
+                    id: item.id, item: item,
+                    affectedSummary: planByID[planID]?.name ?? "行动记录",
+                    changeSummary: [ImpactPreview.ImpactLine(
+                        entityId: planID, title: planByID[planID]?.name ?? "计划",
+                        changeText: "记录行动：\(item.note?.text ?? spanText)")],
+                    kind: .activityLog))
 
             // MARK: record_measurement
             case .recordMeasurement:
@@ -622,7 +689,7 @@ public enum ProposalValidator {
                       input.allowedMetricIDs.contains(metricID), let metric = metrics[metricID] else {
                     issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
                                                 reasons: [.requiresCandidateTask],
-                                                suggestedAction: "去收件箱选择一个结果指标。"))
+                                                suggestedAction: "去选择一个结果指标。"))
                     continue
                 }
                 var measuredAt = today
@@ -636,37 +703,15 @@ public enum ProposalValidator {
                     measuredAt = day
                 }
                 let unit = (measurement.unit ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                let unitMismatched = !unit.isEmpty && !metric.unit.isEmpty && unit != metric.unit
-                let unitMissing = unit.isEmpty && metric.unit.isEmpty
-
-                let context = ExecutionContext(confidence: item.confidence,
-                                               candidateMatchCount: 1,
-                                               measurementUnitMissing: unitMissing,
-                                               measurementUnitMismatched: unitMismatched)
-                switch ExecutionPolicy.decide(for: item.action, context: context) {
-                case .auto:
-                    commands.append(RecordMeasurement(
-                        planID: metric.planId, metricID: metricID, measuredAt: measuredAt,
-                        value: value, unit: unit.isEmpty ? nil : unit,
-                        note: measurement.note, source: source))
-                case .confirm, .bulkPreview:
-                    // 待确认项必须自带可物化的日期（materialize 需要 measuredAt）
-                    item.measurement?.measuredAt = measuredAt.iso8601DateString
-                    needsConfirmation.append(PendingProposal(
-                        id: item.id, item: item,
-                        affectedSummary: "\(metric.name) \(formatValue(value))",
-                        changeSummary: [ImpactPreview.ImpactLine(
-                            entityId: metricID, title: metric.name,
-                            changeText: unitMissing
-                                ? "这个指标还没有单位，需要先补上"
-                                : "原文单位「\(unit)」与指标单位「\(metric.unitDisplayName)」不一致",
-                            oldValue: metric.unitDisplayName, newValue: unit.isEmpty ? nil : unit)],
-                        kind: .measurementUnitUnclear))
-                default:
-                    issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
-                                                reasons: [.unitMismatch],
-                                                suggestedAction: "去收件箱确认单位后保存。"))
-                }
+                item.measurement?.measuredAt = measuredAt.iso8601DateString
+                needsConfirmation.append(PendingProposal(
+                    id: item.id, item: item,
+                    affectedSummary: "\(metric.name) \(formatValue(value))",
+                    changeSummary: [ImpactPreview.ImpactLine(
+                        entityId: metricID, title: metric.name,
+                        changeText: "记录结果：\(formatValue(value))\(metric.unitDisplayName)",
+                        oldValue: metric.unitDisplayName, newValue: unit.isEmpty ? nil : unit)],
+                    kind: .measurementUnitUnclear))
 
             // MARK: save_note
             case .saveNote:
@@ -681,22 +726,30 @@ public enum ProposalValidator {
                     guard input.allowedPlanIDs.contains(id) else {
                         issues.append(ProposalIssue(
                             itemID: item.id, sourceSpan: item.sourceSpan,
-                            reasons: [.planNotCloudAIEnabled],
-                            suggestedAction: "这段内容只在你的设备上处理，可以手动归类。"))
+                            reasons: [.unknownReference(raw)],
+                            suggestedAction: "可以手动归类。"))
                         continue
                     }
                     planID = id
                 }
-                let kind = NoteKind(rawValue: item.note?.kind ?? "") ?? .idea
-                commands.append(CreateNote(text: text, kind: kind, planID: planID,
-                                           source: source, captureID: captureID))
+                needsConfirmation.append(PendingProposal(
+                    id: item.id, item: item,
+                    affectedSummary: text,
+                    changeSummary: [ImpactPreview.ImpactLine(
+                        entityId: planID ?? UUID(), title: "想法备忘", changeText: text)],
+                    kind: .noteCreation))
 
-            // MARK: set_recurrence（高影响：一律确认）
+            // MARK: set_recurrence
             case .setRecurrence:
                 guard let raw = spec?.candidateTaskId, let taskID = UUID(uuidString: raw),
                       input.allowedTaskIDs.contains(taskID), let task = tasks[taskID] else {
                     issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
                                                 reasons: [.requiresCandidateTask]))
+                    continue
+                }
+                if tasks.values.contains(where: { $0.parentId == taskID && !$0.isStep }) {
+                    issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                reasons: [.structureViolation("该待办带有普通子任务，不能直接设为重复行动")]))
                     continue
                 }
                 guard let recurrence = item.recurrence,
@@ -725,7 +778,7 @@ public enum ProposalValidator {
                         changeText: "重复频率调整为「\(summary)」，只作用于生效日及以后")],
                     kind: .recurrenceChange))
 
-            // MARK: set_dependency（高影响：一律确认）
+            // MARK: set_dependency
             case .setDependency:
                 guard let raw = spec?.candidateTaskId, let taskID = UUID(uuidString: raw),
                       input.allowedTaskIDs.contains(taskID), let task = tasks[taskID] else {
@@ -741,7 +794,6 @@ public enum ProposalValidator {
                                                 reasons: [.dependencyInvalid]))
                     continue
                 }
-                // 跨计划与成环一律拒绝（C9）
                 guard depIDs.allSatisfy({ tasks[$0]?.planId == task.planId }),
                       !depIDs.contains(taskID),
                       !depIDs.contains(where: { wouldCreateCycle(taskID: taskID, dependsOn: $0, tasks: tasks) }) else {
@@ -794,6 +846,13 @@ public enum ProposalValidator {
         return nil
     }
 
+    /// 解析 AI 给出的起止时间。空串视为没填；无法解析时 `isValid == false`。
+    static func parseTime(_ raw: String?, timeZone: TimeZone) -> (point: TimePoint?, isValid: Bool) {
+        guard let raw, !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return (nil, true) }
+        guard let point = TimePoint.parse(raw, fallbackTZ: timeZone) else { return (nil, false) }
+        return (point, true)
+    }
+
     /// 模型给的优先级字符串 → `TaskPriority.rawValue`
     static func normalizePriority(_ raw: String) -> String {
         switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
@@ -807,22 +866,19 @@ public enum ProposalValidator {
     /// 由 AI 推断的字段标「建议」（PRD 4.2）
     static func suggestedFields(for item: AIProposalItem, taskSpec: AIProposalTask) -> [String] {
         var fields: [String] = []
-        if taskSpec.planId != nil,
-           item.confidence < AppDefaults.fallback.ai.classificationConfidenceThreshold {
-            fields.append("planId")
-        }
-        if taskSpec.scheduledDate != nil, item.dateInterpretation?.resolvedDate == nil {
-            fields.append("scheduledDate")
+        if taskSpec.planId != nil { fields.append("planId") }
+        if taskSpec.startAt != nil, item.dateInterpretation?.resolvedDate == nil {
+            fields.append("startAt")
         }
         if taskSpec.priority != nil { fields.append("priority") }
         if !taskSpec.dependencyIds.isEmpty { fields.append("dependencyIDs") }
         return fields
     }
 
-    /// 已解析的日期（优先 date_interpretation.resolved_date，其次 scheduled_date）
+    /// 已解析的日期（优先 date_interpretation.resolved_date，其次 start_at）
     static func resolvedDay(item: AIProposalItem, spec: AIProposalTask?,
                             today: DateOnly, timeZone: TimeZone) -> DateOnly? {
-        let raw = item.dateInterpretation?.resolvedDate ?? spec?.scheduledDate
+        let raw = item.dateInterpretation?.resolvedDate ?? spec?.startAt
         guard let raw, !raw.isEmpty else { return nil }
         guard let day = DateOnly(iso8601DateString: dayPrefix(raw), sourceTZ: timeZone.identifier) else {
             return nil

@@ -47,16 +47,17 @@ public enum StructurePolicy {
                                              requiresRecurrenceRule: Bool = true) async throws {
         // C8
         try await requireWritable(id: task.id, type: .task, repository: repository)
-        if task.isTemplate {
+        // 顶层重复行动下只能有步骤，不能有普通子任务
+        if task.isTemplate && !task.isStep {
             let deleted = Set(await repository.tombstones(activeOnly: true).map(\.entityId))
             let children = await repository.children(of: task.id)
-            if children.contains(where: { !deleted.contains($0.id) && $0.status != .cancelled }) {
+            if children.contains(where: { !deleted.contains($0.id) && $0.status != .cancelled && !$0.isTemplate }) {
                 throw MovoError.invalidStructure(reason: "有子任务的待办不能设为重复行动。")
             }
         }
 
-        // C4：isTemplate 必须存在 RecurrenceRule
-        if task.isTemplate && requiresRecurrenceRule {
+        // C4：顶层模板必须存在 RecurrenceRule（步骤不需要自己的规则）
+        if task.isTemplate && !task.isStep && requiresRecurrenceRule {
             let rule = await repository.rule(forTask: task.id)
             if rule == nil {
                 throw MovoError.invalidStructure(reason: "重复行动必须带有重复频率。请先设置频率再保存。")
@@ -106,8 +107,11 @@ public enum StructurePolicy {
         if parent.stageId != task.stageId {
             throw MovoError.invalidStructure(reason: "子任务和父任务必须在同一个阶段下。")
         }
-        if parent.isTemplate || task.isTemplate {
-            throw MovoError.invalidStructure(reason: "重复行动独立管理，暂不能作为父任务或子任务。")
+        if parent.isTemplate && !task.isTemplate {
+            throw MovoError.invalidStructure(reason: "重复行动下只能添加步骤，不能添加普通待办。")
+        }
+        if task.isTemplate && !parent.isTemplate {
+            throw MovoError.invalidStructure(reason: "重复行动不能放在其它待办下面。")
         }
         // 校验候选父链，不能从仓储中的旧 task 开始（新建时尚未落库）。
         var seen: Set<UUID> = [task.id]
@@ -280,6 +284,213 @@ public enum StructurePolicy {
             case .weeklyCount:
                 throw MovoError.invalidStructure(reason: "每周次数需要在 1 到 7 之间。")
             }
+        }
+        if let start = rule.dailyStart, !start.isValid {
+            throw MovoError.invalidStructure(reason: "每天的开始时刻不合法。")
+        }
+        if let end = rule.dailyEnd, !end.isValid {
+            throw MovoError.invalidStructure(reason: "每天的结束时刻不合法。")
+        }
+        if let start = rule.dailyStart, let end = rule.dailyEnd,
+           end.secondsFromMidnight < start.secondsFromMidnight {
+            throw MovoError.invalidStructure(reason: "每天的结束时刻不能早于开始时刻。")
+        }
+    }
+
+    // MARK: - 起止时间
+
+    /// 结束不得早于开始；任一端为空不校验。
+    public static func validateTimeOrder(startAt: TimePoint?, endAt: TimePoint?) throws {
+        guard let startAt, let endAt else { return }
+        if endAt.isEarlier(than: startAt) {
+            throw MovoError.invalidStructure(reason: "结束时间不能早于开始时间。")
+        }
+    }
+
+    static func rangeText(_ start: TimePoint?, _ end: TimePoint?) -> String {
+        switch (start, end) {
+        case (let s?, let e?): return "\(s.displayString) – \(e.displayString)"
+        case (let s?, nil): return "\(s.displayString) 起"
+        case (nil, let e?): return "至 \(e.displayString)"
+        case (nil, nil): return "未设置"
+        }
+    }
+
+    /// 子级必须落在父级范围内；只校验父级已设置的一端，父级为空的一端不约束。
+    static func validateWithin(startAt: TimePoint?, endAt: TimePoint?,
+                               parentStart: TimePoint?, parentEnd: TimePoint?,
+                               child: String, parent: String) throws {
+        if let reason = withinViolation(startAt: startAt, endAt: endAt,
+                                        parentStart: parentStart, parentEnd: parentEnd,
+                                        child: child, parent: parent) {
+            throw MovoError.invalidStructure(reason: reason)
+        }
+    }
+
+    /// 超出父级范围时返回原因文案，否则返回 nil。
+    static func withinViolation(startAt: TimePoint?, endAt: TimePoint?,
+                                parentStart: TimePoint?, parentEnd: TimePoint?,
+                                child: String, parent: String) -> String? {
+        let reason = "\(child)的时间超出了\(parent)的范围，请先调整时间。"
+        if let parentStart {
+            if let startAt, startAt.isEarlier(than: parentStart) { return reason }
+            if let endAt, endAt.isEarlier(than: parentStart) { return reason }
+        }
+        if let parentEnd {
+            if let endAt, endAt.isLater(than: parentEnd) { return reason }
+            if let startAt, startAt.isLater(than: parentEnd) { return reason }
+        }
+        return nil
+    }
+
+    /// 任务是否超出上级任务、阶段或计划的范围。保存校验和界面提示共用；界面只提示，不拒绝任何操作。
+    public static func timeRangeViolation(for task: Task, repository: DomainRepository) async -> String? {
+        guard task.startAt != nil || task.endAt != nil else { return nil }
+        let child = "「\(task.title)」"
+        var seen: Set<UUID> = [task.id]
+        var cursor = task.parentId
+        while let id = cursor, seen.insert(id).inserted, let parent = await repository.task(id) {
+            if let reason = withinViolation(
+                startAt: task.startAt, endAt: task.endAt,
+                parentStart: parent.startAt, parentEnd: parent.endAt, child: child,
+                parent: "上级待办「\(parent.title)」（\(rangeText(parent.startAt, parent.endAt))）") {
+                return reason
+            }
+            cursor = parent.parentId
+        }
+        if let stageID = task.stageId, let stage = await repository.stage(stageID),
+           let reason = withinViolation(
+            startAt: task.startAt, endAt: task.endAt,
+            parentStart: stage.startAt, parentEnd: stage.endAt, child: child,
+            parent: "阶段「\(stage.name)」（\(rangeText(stage.startAt, stage.endAt))）") {
+            return reason
+        }
+        if let planID = task.planId, let plan = await repository.plan(planID),
+           let reason = withinViolation(
+            startAt: task.startAt, endAt: task.endAt,
+            parentStart: plan.startAt, parentEnd: plan.endAt, child: child,
+            parent: "计划「\(plan.name)」（\(rangeText(plan.startAt, plan.endAt))）") {
+            return reason
+        }
+        return nil
+    }
+
+    /// 任务起止校验：先看自身先后，再看是否落在上级任务、阶段、计划之内；
+    /// 时间变小时还要确认未完成的下级不会因此越界。已有的越界数据只在这里被改动时才会被要求修正。
+    public static func validateTaskTime(_ task: Task, old: Task?, repository: DomainRepository) async throws {
+        try validateTimeOrder(startAt: task.startAt, endAt: task.endAt)
+
+        let timeChanged: Bool
+        let placementChanged: Bool
+        if let old {
+            timeChanged = old.startAt != task.startAt || old.endAt != task.endAt
+            placementChanged = old.parentId != task.parentId || old.stageId != task.stageId
+                || old.planId != task.planId
+        } else {
+            timeChanged = true
+            placementChanged = true
+        }
+
+        if task.startAt != nil || task.endAt != nil, timeChanged || placementChanged,
+           let reason = await timeRangeViolation(for: task, repository: repository) {
+            throw MovoError.invalidStructure(reason: reason)
+        }
+
+        if old != nil, timeChanged {
+            let deleted = Set(await repository.tombstones(activeOnly: true).map(\.entityId))
+            var stack = await repository.children(of: task.id)
+            var visited: Set<UUID> = [task.id]
+            while let child = stack.popLast() {
+                guard visited.insert(child.id).inserted, !deleted.contains(child.id) else { continue }
+                let grandchildren = await repository.children(of: child.id)
+                stack.append(contentsOf: grandchildren)
+                // 已完成、已取消的历史不拦截上级调整时间
+                guard child.status != .done, child.status != .cancelled else { continue }
+                try validateWithin(startAt: child.startAt, endAt: child.endAt,
+                                   parentStart: task.startAt, parentEnd: task.endAt,
+                                   child: "子任务「\(child.title)」",
+                                   parent: "「\(task.title)」（\(rangeText(task.startAt, task.endAt))）")
+            }
+        }
+    }
+
+    /// 阶段起止校验：落在计划之内；时间变小时，阶段下未完成的任务和重复规则也不能越界。
+    public static func validateStageTime(_ stage: Stage, old: Stage?, repository: DomainRepository) async throws {
+        try validateTimeOrder(startAt: stage.startAt, endAt: stage.endAt)
+
+        let timeChanged: Bool
+        if let old {
+            timeChanged = old.startAt != stage.startAt || old.endAt != stage.endAt
+        } else {
+            timeChanged = true
+        }
+        guard timeChanged else { return }
+
+        if stage.startAt != nil || stage.endAt != nil, let plan = await repository.plan(stage.planId) {
+            try validateWithin(startAt: stage.startAt, endAt: stage.endAt,
+                               parentStart: plan.startAt, parentEnd: plan.endAt,
+                               child: "阶段「\(stage.name)」",
+                               parent: "计划「\(plan.name)」（\(rangeText(plan.startAt, plan.endAt))）")
+        }
+        guard old != nil else { return }
+        let deleted = Set(await repository.tombstones(activeOnly: true).map(\.entityId))
+        for task in await repository.tasks(planID: stage.planId)
+            where task.stageId == stage.id && !deleted.contains(task.id) {
+            try await validateOpenTaskFits(task, startAt: stage.startAt, endAt: stage.endAt,
+                                           parent: "阶段「\(stage.name)」（\(rangeText(stage.startAt, stage.endAt))）",
+                                           repository: repository)
+        }
+    }
+
+    /// 计划起止校验：时间变小时，计划下未完成的阶段、任务和重复规则不能越界。
+    public static func validatePlanTime(_ plan: Plan, old: Plan?, repository: DomainRepository) async throws {
+        try validateTimeOrder(startAt: plan.startAt, endAt: plan.endAt)
+        guard let old, old.startAt != plan.startAt || old.endAt != plan.endAt else { return }
+
+        let deleted = Set(await repository.tombstones(activeOnly: true).map(\.entityId))
+        let parent = "计划「\(plan.name)」（\(rangeText(plan.startAt, plan.endAt))）"
+        for stage in await repository.stages(planID: plan.id)
+            where !deleted.contains(stage.id) && stage.status != .achieved && stage.status != .cancelled {
+            try validateWithin(startAt: stage.startAt, endAt: stage.endAt,
+                               parentStart: plan.startAt, parentEnd: plan.endAt,
+                               child: "阶段「\(stage.name)」", parent: parent)
+        }
+        for task in await repository.tasks(planID: plan.id) where !deleted.contains(task.id) {
+            try await validateOpenTaskFits(task, startAt: plan.startAt, endAt: plan.endAt,
+                                           parent: parent, repository: repository)
+        }
+    }
+
+    /// 未完成的任务（或重复模板的有效期）是否落在给定范围内
+    private static func validateOpenTaskFits(_ task: Task, startAt: TimePoint?, endAt: TimePoint?,
+                                             parent: String, repository: DomainRepository) async throws {
+        if task.isTemplate {
+            guard let rule = await repository.rule(forTask: task.id) else { return }
+            try validateWithin(startAt: .day(rule.effectiveFrom), endAt: rule.effectiveUntil.map { .day($0) },
+                               parentStart: startAt, parentEnd: endAt,
+                               child: "重复行动「\(task.title)」", parent: parent)
+            return
+        }
+        guard task.status != .done, task.status != .cancelled else { return }
+        try validateWithin(startAt: task.startAt, endAt: task.endAt,
+                           parentStart: startAt, parentEnd: endAt,
+                           child: "待办「\(task.title)」", parent: parent)
+    }
+
+    /// 重复规则的有效期必须落在所属计划、阶段范围内（只校验已设置的端）。
+    public static func validateRuleTime(_ rule: RecurrenceRule, task: Task, repository: DomainRepository) async throws {
+        let start: TimePoint = .day(rule.effectiveFrom)
+        let end: TimePoint? = rule.effectiveUntil.map { .day($0) }
+        let child = "重复行动「\(task.title)」"
+        if let stageID = task.stageId, let stage = await repository.stage(stageID) {
+            try validateWithin(startAt: start, endAt: end,
+                               parentStart: stage.startAt, parentEnd: stage.endAt, child: child,
+                               parent: "阶段「\(stage.name)」（\(rangeText(stage.startAt, stage.endAt))）")
+        }
+        if let planID = task.planId, let plan = await repository.plan(planID) {
+            try validateWithin(startAt: start, endAt: end,
+                               parentStart: plan.startAt, parentEnd: plan.endAt, child: child,
+                               parent: "计划「\(plan.name)」（\(rangeText(plan.startAt, plan.endAt))）")
         }
     }
 }

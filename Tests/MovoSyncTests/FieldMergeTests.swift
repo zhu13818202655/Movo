@@ -186,13 +186,105 @@ final class FieldMergeTests: XCTestCase {
                        .deletionWins)
     }
 
-    // MARK: - 字段中文名
+    // MARK: - 字段中文名与旧格式解码（time.md）
 
     func testFieldDisplayNames() {
         XCTAssertEqual(SyncFieldNaming.displayName(for: "title"), "标题")
         XCTAssertEqual(SyncFieldNaming.displayName(for: "scheduledDate"), "安排日期")
+        XCTAssertEqual(SyncFieldNaming.displayName(for: "startAt"), "开始时间")
+        XCTAssertEqual(SyncFieldNaming.displayName(for: "endAt"), "结束时间")
         XCTAssertEqual(SyncFieldNaming.text(for: .null), "（空）")
         XCTAssertEqual(SyncFieldNaming.text(for: .bool(true)), "是")
         XCTAssertEqual(SyncFieldNaming.text(for: .int(3)), "3")
+    }
+
+    func testLegacyTaskDecodesThroughSyncEntityBox() throws {
+        let taskID = UUID()
+        let legacyJSON = """
+        {
+          "id": "\(taskID.uuidString)",
+          "title": "旧版任务",
+          "isTemplate": false,
+          "status": "todo",
+          "scheduledDate": {"y": 2026, "m": 10, "d": 8, "sourceTZ": "Asia/Shanghai"},
+          "timeHint": {"type": "exact", "hour": 14, "minute": 30},
+          "hardDeadline": {"epoch": 1800000000, "tzID": "Asia/Shanghai"},
+          "tags": [],
+          "dependencyIDs": [],
+          "source": "manual",
+          "suggestedFields": [],
+          "createdAt": "2026-09-28T10:00:00Z",
+          "updatedAt": "2026-09-28T10:00:00Z",
+          "revision": 1
+        }
+        """
+        let data = try XCTUnwrap(legacyJSON.data(using: .utf8))
+        let box = try XCTUnwrap(SyncEntityBox.decode(type: .task, data: data))
+        guard case .task(let task) = box else {
+            return XCTFail("未能解出 Task")
+        }
+        XCTAssertEqual(task.title, "旧版任务")
+        XCTAssertEqual(task.startAt?.clockText, "14:30")
+        XCTAssertEqual(task.startAt?.dateOnly.iso8601DateString, "2026-10-08")
+        XCTAssertEqual(task.endAt?.instantValue?.epoch, Date(timeIntervalSince1970: 1800000000))
+    }
+
+    func testLegacyPlanDecodesTargetDateThroughSyncEntityBox() throws {
+        let planID = UUID()
+        let legacyJSON = """
+        {
+          "id": "\(planID.uuidString)",
+          "name": "旧版计划",
+          "kind": "delivery",
+          "status": "active",
+          "targetDate": {"y": 2026, "m": 10, "d": 31, "sourceTZ": "Asia/Shanghai"},
+          "aliases": [],
+          "contextPhrases": [],
+          "excludedTerms": [],
+          "cloudAIEnabled": true,
+          "syncEnabled": true,
+          "createdAt": "2026-09-28T10:00:00Z",
+          "updatedAt": "2026-09-28T10:00:00Z",
+          "revision": 1
+        }
+        """
+        let data = try XCTUnwrap(legacyJSON.data(using: .utf8))
+        let box = try XCTUnwrap(SyncEntityBox.decode(type: .plan, data: data))
+        guard case .plan(let plan) = box else {
+            return XCTFail("未能解出 Plan")
+        }
+        XCTAssertEqual(plan.name, "旧版计划")
+        XCTAssertNil(plan.startAt)
+        XCTAssertEqual(plan.endAt?.dateOnly.iso8601DateString, "2026-10-31")
+    }
+
+    func testSyncMergeWithStartAtAndEndAtFields() {
+        let id = UUID()
+        let initialTask = task(id: id, title: "起止时间待办", rev: 1)
+        let localStart = TimePoint.day(DateOnly(y: 2026, m: 10, d: 5, sourceTZ: tz.identifier))
+        let remoteEnd = TimePoint.day(DateOnly(y: 2026, m: 10, d: 20, sourceTZ: tz.identifier))
+
+        var localTask = initialTask
+        localTask.startAt = localStart
+        localTask.revision = 2
+
+        var remoteTask = initialTask
+        remoteTask.endAt = remoteEnd
+        remoteTask.revision = 2
+
+        let localRecord = record(localTask, rev: 2, deviceId: "mac", fieldRev: ["startAt": 2])
+        let remoteRecord = record(remoteTask, rev: 2, deviceId: "iphone", fieldRev: ["endAt": 2])
+
+        let outcome = FieldMerge.merge(local: localRecord, remote: remoteRecord, base: nil)
+        XCTAssertFalse(outcome.isDeleted)
+        XCTAssertTrue(outcome.conflicts.isEmpty, "不同字段不应产生冲突")
+
+        // 重建实体检验同时保留两端字段
+        let rebuilt = SyncEntityBox.task(initialTask).applying(mergedFields: outcome.mergedFields,
+                                                               revision: 3,
+                                                               updatedAt: base.addingTimeInterval(300))
+        guard case .task(let finalTask)? = rebuilt else { return XCTFail("重建失败") }
+        XCTAssertEqual(finalTask.startAt, localStart)
+        XCTAssertEqual(finalTask.endAt, remoteEnd)
     }
 }

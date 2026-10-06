@@ -2,10 +2,11 @@
 //  ExportService.swift
 //  Data/Export
 //
-//  T1.8 / REQ 16：计划档案与导出（Markdown / JSON）+ 预览。
-//  · 导出包含依赖关系字段，跨月计划导出后可被解析且与源一致（AC18）。
-//  · 敏感默认排除：cloudAIEnabled == false 的计划不进入默认导出集（AC16 本地部分）。
-//  · 原始音频从不进同步/导出/日志（9.7）——该字段不参与任何导出结构。
+//  T1.8 / REQ 16：计划档案与导出（Markdown / Movo 文件）+ 预览。
+//  · Movo 文件（`.movo.json`）是标准交换格式，结构见 PlanFile.swift，可被「导入」读回。
+//  · 默认只导出结构和计划内容；行动记录、测量值、笔记由用户勾选（PlanFileOptions）。
+//  · 不再按 cloudAIEnabled 过滤：导出由用户主动发起，范围与内容由用户选择。
+//  · 原始音频、API Key、设备标识从不进入导出结构（9.7）。
 //
 
 import Foundation
@@ -21,14 +22,14 @@ public enum ExportFormat: String, Sendable, CaseIterable, Identifiable {
     public var displayName: String {
         switch self {
         case .markdown: "Markdown"
-        case .json: "JSON"
+        case .json: "Movo 文件"
         }
     }
 
     public var fileExtension: String {
         switch self {
         case .markdown: "md"
-        case .json: "json"
+        case .json: PlanFile.fileExtension
         }
     }
 }
@@ -55,12 +56,39 @@ public struct ExportPlanSelection: Sendable, Hashable {
         self.occurrences = occurrences; self.rules = rules
     }
 
-    /// 敏感计划（未允许云 AI）默认不导出
-    public var isSensitive: Bool { !plan.cloudAIEnabled }
-
     /// 依赖关系摘要（AC18：导出必须能还原依赖）
     public var hasDependencies: Bool {
         tasks.contains { !$0.dependencyIDs.isEmpty }
+    }
+
+    /// 按选项去掉默认不导出的内容（行动记录、测量值、笔记）
+    func applying(_ options: PlanFileOptions) -> ExportPlanSelection {
+        var copy = self
+        if !options.includeRecords { copy.activities = [] }
+        if !options.includeMeasurements { copy.measurements = [] }
+        if !options.includeNotes { copy.notes = [] }
+        return copy
+    }
+}
+
+/// 不属于任何计划的任务与笔记
+public struct ExportStandalone: Sendable, Hashable {
+    public var tasks: [Task]
+    public var rules: [RecurrenceRule]
+    public var notes: [Note]
+
+    public init(tasks: [Task] = [], rules: [RecurrenceRule] = [], notes: [Note] = []) {
+        self.tasks = tasks; self.rules = rules; self.notes = notes
+    }
+}
+
+/// 一次导出的范围：若干计划 + 独立任务
+public struct ExportScope: Sendable, Hashable {
+    public var selections: [ExportPlanSelection]
+    public var standalone: ExportStandalone
+
+    public init(selections: [ExportPlanSelection], standalone: ExportStandalone = ExportStandalone()) {
+        self.selections = selections; self.standalone = standalone
     }
 }
 
@@ -71,15 +99,17 @@ public struct ExportBundle: Sendable {
     public var content: String
     public var format: ExportFormat
     public var includedPlanNames: [String]
-    public var excludedPlanNames: [String]
+    public var standaloneTaskCount: Int
     public var generatedAt: Date
 
     public init(fileName: String, content: String, format: ExportFormat,
-                includedPlanNames: [String], excludedPlanNames: [String], generatedAt: Date) {
+                includedPlanNames: [String], standaloneTaskCount: Int = 0, generatedAt: Date) {
         self.fileName = fileName; self.content = content; self.format = format
-        self.includedPlanNames = includedPlanNames; self.excludedPlanNames = excludedPlanNames
+        self.includedPlanNames = includedPlanNames; self.standaloneTaskCount = standaloneTaskCount
         self.generatedAt = generatedAt
     }
+
+    public var isEmpty: Bool { includedPlanNames.isEmpty && standaloneTaskCount == 0 }
 
     public var byteCount: Int { content.lengthOfBytes(using: .utf8) }
 
@@ -90,7 +120,7 @@ public struct ExportBundle: Sendable {
 
     public var summaryText: String {
         var parts = ["包含 \(includedPlanNames.count) 个计划"]
-        if !excludedPlanNames.isEmpty { parts.append("默认排除 \(excludedPlanNames.count) 个敏感计划") }
+        if standaloneTaskCount > 0 { parts.append("\(standaloneTaskCount) 项独立待办") }
         parts.append(byteCountText)
         return parts.joined(separator: " · ")
     }
@@ -100,17 +130,18 @@ public struct ExportBundle: Sendable {
 
 public enum ExportService {
 
-    /// 按计划聚合素材。`onlyPlanID` 非空时只导出该计划。
+    /// 按计划聚合素材。`onlyPlanID` 非空时只导出该计划；为空时一并带上独立任务。
+    /// 调用方负责先去掉已删除（墓碑）的实体。
     public static func gather(plans: [Plan], stages: [Stage], tasks: [Task], metrics: [PlanMetric],
                               measurements: [Measurement], activities: [ActionRecord], notes: [Note],
                               occurrences: [RecurrenceOccurrence], rules: [RecurrenceRule],
-                              onlyPlanID: UUID? = nil) -> [ExportPlanSelection] {
+                              onlyPlanID: UUID? = nil) -> ExportScope {
         let scoped = plans
             .filter { onlyPlanID == nil || $0.id == onlyPlanID }
             .filter { $0.status != .archived || onlyPlanID != nil }
             .sorted { $0.updatedAt > $1.updatedAt }
 
-        return scoped.map { plan in
+        let selections: [ExportPlanSelection] = scoped.map { plan in
             let planTasks = tasks.filter { $0.planId == plan.id }
             let taskIDs = Set(planTasks.map(\.id))
             return ExportPlanSelection(
@@ -126,46 +157,56 @@ public enum ExportService {
                 occurrences: occurrences.filter { $0.planId == plan.id },
                 rules: rules.filter { taskIDs.contains($0.taskId) })
         }
+
+        guard onlyPlanID == nil else { return ExportScope(selections: selections) }
+        let looseTasks = tasks.filter { $0.planId == nil }.sorted { $0.createdAt < $1.createdAt }
+        let looseIDs = Set(looseTasks.map(\.id))
+        let standalone = ExportStandalone(
+            tasks: looseTasks,
+            rules: rules.filter { looseIDs.contains($0.taskId) },
+            notes: notes.filter { $0.planId == nil }.sorted { $0.capturedAt < $1.capturedAt })
+        return ExportScope(selections: selections, standalone: standalone)
     }
 
-    public static func export(_ selections: [ExportPlanSelection],
+    public static func export(_ scope: ExportScope,
                               format: ExportFormat,
-                              includeSensitive: Bool,
+                              options: PlanFileOptions = PlanFileOptions(),
                               generatedAt: Date,
                               timeZone: TimeZone) -> ExportBundle {
-        let included = includeSensitive ? selections : selections.filter { !$0.isSensitive }
-        let excluded = includeSensitive ? [] : selections.filter(\.isSensitive).map(\.plan.name)
+        let selections = scope.selections.map { $0.applying(options) }
+        var standalone = scope.standalone
+        if !options.includeNotes { standalone.notes = [] }
 
         let content: String
         switch format {
         case .markdown:
-            content = markdown(included, generatedAt: generatedAt, timeZone: timeZone,
-                               excluded: excluded)
+            content = markdown(selections, standalone: standalone, generatedAt: generatedAt,
+                               timeZone: timeZone)
         case .json:
-            content = json(included, generatedAt: generatedAt, excluded: excluded)
+            content = PlanFileCodec.encode(PlanFileBuilder.build(
+                selections: selections, standaloneTasks: standalone.tasks,
+                standaloneRules: standalone.rules, standaloneNotes: standalone.notes,
+                options: options, exportedAt: generatedAt))
         }
 
         let stamp = DateOnly(from: generatedAt, in: timeZone).iso8601DateString
         return ExportBundle(
             fileName: "movo-export-\(stamp).\(format.fileExtension)",
             content: content, format: format,
-            includedPlanNames: included.map(\.plan.name),
-            excludedPlanNames: excluded,
+            includedPlanNames: selections.map(\.plan.name),
+            standaloneTaskCount: standalone.tasks.filter { !$0.isStep }.count,
             generatedAt: generatedAt)
     }
 
     // MARK: Markdown
 
-    static func markdown(_ selections: [ExportPlanSelection], generatedAt: Date,
-                         timeZone: TimeZone, excluded: [String]) -> String {
+    static func markdown(_ selections: [ExportPlanSelection], standalone: ExportStandalone,
+                         generatedAt: Date, timeZone: TimeZone) -> String {
         var lines: [String] = []
         lines.append("# 渐成 · 计划导出")
         lines.append("")
         lines.append("- 导出时间：\(stamp(generatedAt, in: timeZone))")
         lines.append("- 计划数量：\(selections.count)")
-        if !excluded.isEmpty {
-            lines.append("- 已排除（未允许云 AI，默认不导出）：\(excluded.joined(separator: "、"))")
-        }
         lines.append("")
 
         for selection in selections {
@@ -174,10 +215,9 @@ public enum ExportService {
             lines.append("")
             lines.append("- 类型：\(plan.taxonomyLabel)")
             if let goal = plan.goalText, !goal.isEmpty { lines.append("- 目标：\(goal)") }
-            if let target = plan.targetDate { lines.append("- 目标日期：\(target.iso8601DateString)") }
+            if let start = plan.startAt { lines.append("- 开始时间：\(start.iso8601String)") }
+            if let end = plan.endAt { lines.append("- 结束时间：\(end.iso8601String)") }
             lines.append("- 状态：\(plan.status.displayName)")
-            lines.append("- 允许云 AI：\(plan.cloudAIEnabled ? "是" : "否")")
-            lines.append("- 云同步：\(plan.syncEnabled ? "是" : "否")")
             if !plan.aliases.isEmpty {
                 lines.append("- 别名：\(plan.aliases.joined(separator: "、"))")
             }
@@ -191,7 +231,10 @@ public enum ExportService {
                 for stage in selection.stages {
                     let achieved = stage.achievedAt.map { "（达成于 \(stamp($0, in: timeZone))）" } ?? ""
                     let criteria = stage.criteriaText.map { "；达成条件：\($0)" } ?? ""
-                    lines.append("- [\(stage.status.displayName)] \(stage.name)\(achieved)\(criteria)")
+                    var times = ""
+                    if let start = stage.startAt { times += "；开始：\(start.iso8601String)" }
+                    if let end = stage.endAt { times += "；结束：\(end.iso8601String)" }
+                    lines.append("- [\(stage.status.displayName)] \(stage.name)\(achieved)\(criteria)\(times)")
                 }
                 lines.append("")
             }
@@ -211,13 +254,13 @@ public enum ExportService {
                     if let parentID = task.parentId, let parent = titleByID[parentID] {
                         detail.append("上级：\(parent)")
                     }
-                    detail.append("安排日期：\(task.scheduledDate?.iso8601DateString ?? "未安排")")
-                    detail.append("硬截止：\(task.hardDeadline?.displayString ?? "未设置")")
-                    if let hint = task.timeHint { detail.append("时段：\(hint.displayName)") }
+                    if let start = task.startAt { detail.append("开始：\(start.iso8601String)") }
+                    if let end = task.endAt { detail.append("结束：\(end.iso8601String)") }
                     if let estimate = task.estimateMinutes { detail.append("预计：\(estimate) 分钟") }
                     if let priority = task.priority { detail.append("优先级：\(priority.displayName)") }
                     if !task.tags.isEmpty { detail.append("标签：\(task.tags.joined(separator: "、"))") }
-                    if task.isTemplate { detail.append("重复模板：是") }
+                    if task.isStep { detail.append("重复行动的步骤") }
+                    else if task.isTemplate { detail.append("重复模板：是") }
                     if !task.dependencyIDs.isEmpty {
                         let names = task.dependencyIDs.map { titleByID[$0] ?? $0.uuidString }
                         detail.append("前置：\(names.joined(separator: "、"))")
@@ -233,7 +276,8 @@ public enum ExportService {
                 for rule in selection.rules {
                     let taskTitle = selection.tasks.first { $0.id == rule.taskId }?.title ?? "重复行动"
                     let until = rule.effectiveUntil.map { "，至 \($0.iso8601DateString)" } ?? ""
-                    lines.append("- \(taskTitle)：\(rule.ruleDescription)（生效自 \(rule.effectiveFrom.iso8601DateString)\(until)，第 \(rule.version) 版，\(rule.status.displayName)）")
+                    let daily = rule.dailyTimeDescription.map { "，每天 \($0)" } ?? ""
+                    lines.append("- \(taskTitle)：\(rule.ruleDescription)（生效自 \(rule.effectiveFrom.iso8601DateString)\(until)\(daily)，第 \(rule.version) 版，\(rule.status.displayName)）")
                 }
                 lines.append("")
             }
@@ -307,53 +351,42 @@ public enum ExportService {
             }
         }
 
+        let looseTasks = standalone.tasks.filter { !$0.isStep }
+        if !looseTasks.isEmpty {
+            lines.append("## 独立待办")
+            lines.append("")
+            let titleByID = Dictionary(standalone.tasks.map { ($0.id, $0.title) },
+                                       uniquingKeysWith: { a, _ in a })
+            for task in looseTasks {
+                var detail: [String] = ["状态：\(task.status.displayName)"]
+                if let parentID = task.parentId, let parent = titleByID[parentID] {
+                    detail.append("上级：\(parent)")
+                }
+                if let start = task.startAt { detail.append("开始：\(start.iso8601String)") }
+                if let end = task.endAt { detail.append("结束：\(end.iso8601String)") }
+                if task.isTemplate,
+                   let rule = standalone.rules.first(where: { $0.taskId == task.id }) {
+                    detail.append("重复：\(rule.ruleDescription)")
+                    let steps = standalone.tasks.filter { $0.isStep && $0.parentId == task.id }
+                    if !steps.isEmpty {
+                        detail.append("步骤：\(steps.map(\.title).joined(separator: "、"))")
+                    }
+                }
+                lines.append("- [\(task.status == .done ? "x" : " ")] \(task.title)（\(detail.joined(separator: "；"))）")
+            }
+            lines.append("")
+        }
+
+        if !standalone.notes.isEmpty {
+            lines.append("## 独立笔记")
+            lines.append("")
+            for note in standalone.notes {
+                lines.append("- [\(note.kind.displayName)] \(note.text)")
+            }
+            lines.append("")
+        }
+
         return lines.joined(separator: "\n")
-    }
-
-    // MARK: JSON
-
-    /// 导出文档结构。字段与领域实体一一对应，含 dependencyIDs（AC18）。
-    struct Document: Encodable {
-        struct PlanBlock: Encodable {
-            var plan: Plan
-            var stages: [Stage]
-            var tasks: [Task]
-            var metrics: [PlanMetric]
-            var measurements: [Measurement]
-            var activities: [ActionRecord]
-            var notes: [Note]
-            var rules: [RecurrenceRule]
-            var occurrences: [RecurrenceOccurrence]
-        }
-        var schemaVersion: Int
-        var application: String
-        var generatedAt: Date
-        var excludedPlanNames: [String]
-        var plans: [PlanBlock]
-    }
-
-    static func json(_ selections: [ExportPlanSelection], generatedAt: Date,
-                     excluded: [String]) -> String {
-        let document = Document(
-            schemaVersion: 1,
-            application: "Movo / 渐成",
-            generatedAt: generatedAt,
-            excludedPlanNames: excluded,
-            plans: selections.map {
-                Document.PlanBlock(plan: $0.plan, stages: $0.stages, tasks: $0.tasks,
-                                   metrics: $0.metrics, measurements: $0.measurements,
-                                   activities: $0.activities, notes: $0.notes,
-                                   rules: $0.rules, occurrences: $0.occurrences)
-            })
-
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        encoder.dateEncodingStrategy = .iso8601
-        guard let data = try? encoder.encode(document),
-              let text = String(data: data, encoding: .utf8) else {
-            return "{}"
-        }
-        return text
     }
 
     // MARK: 工具

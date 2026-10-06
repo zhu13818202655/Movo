@@ -21,7 +21,7 @@ public struct TodayScreen: View {
             ScreenChrome("待办", subtitle: env.store.today.displayStringWithWeekday) {
                 HStack(spacing: MovoSpace.s) {
                     SyncStatusBadge()
-                    MovoIconButton("tray", label: "收件箱") { router.select(.inbox) }
+                    MovoIconButton("sparkles.rectangle.stack", label: "整理记录") { router.select(.inbox) }
                     MovoIconButton("magnifyingglass", label: "搜索") { router.select(.search) }
                 }
             }

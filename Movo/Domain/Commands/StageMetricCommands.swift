@@ -11,13 +11,20 @@ import Foundation
 public struct StagePatch: Sendable, Hashable {
     public var name: String?
     public var criteriaText: String?
-    public var targetDate: DateOnly?
+    public var startAt: TimePoint?
+    public var endAt: TimePoint?
+    public var clearStartAt: Bool
+    public var clearEndAt: Bool
     public var status: StageStatus?
     public var sortIndex: Int?
 
-    public init(name: String? = nil, criteriaText: String? = nil, targetDate: DateOnly? = nil,
+    public init(name: String? = nil, criteriaText: String? = nil,
+                startAt: TimePoint? = nil, endAt: TimePoint? = nil,
+                clearStartAt: Bool = false, clearEndAt: Bool = false,
                 status: StageStatus? = nil, sortIndex: Int? = nil) {
-        self.name = name; self.criteriaText = criteriaText; self.targetDate = targetDate
+        self.name = name; self.criteriaText = criteriaText
+        self.startAt = startAt; self.endAt = endAt
+        self.clearStartAt = clearStartAt; self.clearEndAt = clearEndAt
         self.status = status; self.sortIndex = sortIndex
     }
 
@@ -25,7 +32,8 @@ public struct StagePatch: Sendable, Hashable {
         var s = stage
         if let name { s.name = name }
         if let criteriaText { s.criteriaText = criteriaText }
-        if let targetDate { s.targetDate = targetDate }
+        if clearStartAt { s.startAt = nil } else if let startAt { s.startAt = startAt }
+        if clearEndAt { s.endAt = nil } else if let endAt { s.endAt = endAt }
         if let status { s.status = status }
         if let sortIndex { s.sortIndex = sortIndex }
         return s
@@ -40,13 +48,16 @@ public struct CreateStage: DomainCommand {
     public var planID: UUID
     public var name: String
     public var criteriaText: String?
-    public var targetDate: DateOnly?
+    public var startAt: TimePoint?
+    public var endAt: TimePoint?
     public var sortIndex: Int
 
     public init(operationID: UUID = UUID(), id: UUID = UUID(), planID: UUID, name: String,
-                criteriaText: String? = nil, targetDate: DateOnly? = nil, sortIndex: Int = 0) {
+                criteriaText: String? = nil, startAt: TimePoint? = nil, endAt: TimePoint? = nil,
+                sortIndex: Int = 0) {
         self.operationID = operationID; self.entityID = id; self.planID = planID; self.name = name
-        self.criteriaText = criteriaText; self.targetDate = targetDate; self.sortIndex = sortIndex
+        self.criteriaText = criteriaText; self.startAt = startAt; self.endAt = endAt
+        self.sortIndex = sortIndex
     }
 
     @MainActor
@@ -62,8 +73,9 @@ public struct CreateStage: DomainCommand {
             throw MovoError.invalidStructure(reason: "阶段需要一个名称。")
         }
         var stage = Stage(id: entityID, planId: planID, name: trimmed, criteriaText: criteriaText,
-                          targetDate: targetDate, sortIndex: sortIndex)
+                          startAt: startAt, endAt: endAt, sortIndex: sortIndex)
         stage.createdAt = context.now
+        try await StructurePolicy.validateStageTime(stage, old: nil, repository: context.repository)
         let saved = try await context.write(stage, old: nil)
         context.setUserMessage("已添加阶段「\(saved.name)」")
         return CommandResult(operationID: operationID, entityID: saved.id,
@@ -106,9 +118,11 @@ public struct UpdateStage: DomainCommand {
             context.setReason(reason)
         }
         // 阶段结构修改保留版本
-        if patch.name != nil || patch.criteriaText != nil || patch.targetDate != nil {
+        if patch.name != nil || patch.criteriaText != nil || patch.startAt != nil || patch.endAt != nil
+            || patch.clearStartAt || patch.clearEndAt {
             updated.version = old.version + 1
         }
+        try await StructurePolicy.validateStageTime(updated, old: old, repository: context.repository)
         let saved = try await context.write(updated, old: old)
         context.setUserMessage(saved.status == .achieved ? "已确认阶段「\(saved.name)」达成" : "已更新阶段「\(saved.name)」")
         return CommandResult(operationID: operationID, entityID: saved.id,

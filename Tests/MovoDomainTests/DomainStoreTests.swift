@@ -2,7 +2,7 @@
 //  DomainStoreTests.swift
 //  MovoDomainTests
 //
-//  4.1/4.2 写入路径：唯一入口、幂等（operationId）、安排日期与硬截止相互独立（AC02）、
+//  4.1/4.2 写入路径：唯一入口、幂等（operationId）、开始时间与结束时间相互独立、
 //  补偿式撤销遇到后续编辑必须跳过（AC10）。
 //
 
@@ -22,39 +22,161 @@ final class DomainStoreTests: XCTestCase {
                     defaults: .fallback)
     }
 
-    // MARK: - AC02：安排日期与硬截止独立
+    // MARK: - 开始时间与结束时间独立
 
-    func testScheduledDateAndDeadlineAreIndependent() async throws {
+    func testStartAndEndAreIndependent() async throws {
         let store = makeStore()
         let tz = store.currentTimeZone
         let scheduled = DateOnly(y: 2026, m: 9, d: 28, sourceTZ: tz.identifier)
+        let start = TimePoint.day(scheduled)
         let deadline = DateTimeTZ(Self.fixedNow.addingTimeInterval(86_400), in: tz)
+        let end = TimePoint.instant(deadline)
 
-        let created = try await store.execute(CreateTask(title: "体检",
-                                                        scheduledDate: scheduled,
-                                                        deadline: deadline))
+        let created = try await store.execute(CreateTask(title: "体检", startAt: start, endAt: end))
         let id = try XCTUnwrap(created.entityID)
         let initial = await store.repository.task(id)
         let first = try XCTUnwrap(initial)
-        XCTAssertEqual(first.scheduledDate, scheduled)
-        XCTAssertEqual(first.hardDeadline?.epoch, deadline.epoch)
+        XCTAssertEqual(first.startAt, start)
+        XCTAssertEqual(first.endAt, end)
 
-        // 只改安排日期：硬截止必须原样保留
-        _ = try await store.execute(ScheduleTask(taskID: id, date: scheduled.adding(days: 3),
-                                                 baseRevision: first.revision))
+        // 只改开始时间：结束时间必须原样保留
+        let moved = TimePoint.day(scheduled.adding(days: 3))
+        _ = try await store.execute(ScheduleTask(taskID: id, startAt: moved, baseRevision: first.revision))
         let afterSchedule = await store.repository.task(id)
         let second = try XCTUnwrap(afterSchedule)
-        XCTAssertEqual(second.scheduledDate, scheduled.adding(days: 3))
-        XCTAssertEqual(second.hardDeadline?.epoch, deadline.epoch, "AC02：两者互不影响")
+        XCTAssertEqual(second.startAt, moved)
+        XCTAssertEqual(second.endAt, end, "两端互不影响")
 
-        // 只改硬截止：安排日期必须原样保留
-        let newDeadline = DateTimeTZ(Self.fixedNow.addingTimeInterval(172_800), in: tz)
-        _ = try await store.execute(SetDeadline(taskID: id, deadline: newDeadline,
-                                                baseRevision: second.revision))
+        // 只改结束时间：开始时间必须原样保留
+        let newEnd = TimePoint.instant(DateTimeTZ(Self.fixedNow.addingTimeInterval(172_800), in: tz))
+        _ = try await store.execute(SetDeadline(taskID: id, endAt: newEnd, baseRevision: second.revision))
         let afterDeadline = await store.repository.task(id)
         let third = try XCTUnwrap(afterDeadline)
-        XCTAssertEqual(third.scheduledDate, scheduled.adding(days: 3))
-        XCTAssertEqual(third.hardDeadline?.epoch, newDeadline.epoch)
+        XCTAssertEqual(third.startAt, moved)
+        XCTAssertEqual(third.endAt, newEnd)
+    }
+
+    // MARK: - 起止时间校验
+
+    private func assertRejected(_ command: some DomainCommand, file: StaticString = #filePath,
+                                line: UInt = #line, on store: DomainStore) async {
+        do {
+            _ = try await store.execute(command)
+            XCTFail("应被校验拒绝", file: file, line: line)
+        } catch is MovoError { }
+        catch { XCTFail("错误类型不符：\(error)", file: file, line: line) }
+    }
+
+    func testEndBeforeStartIsRejected() async {
+        let store = makeStore()
+        let tz = store.currentTimeZone.identifier
+        let day = DateOnly(y: 2026, m: 10, d: 10, sourceTZ: tz)
+        await assertRejected(CreateTask(title: "倒着的时间", startAt: .day(day),
+                                        endAt: .day(day.adding(days: -1))), on: store)
+        let tasks = await store.repository.allTasks()
+        XCTAssertTrue(tasks.isEmpty)
+    }
+
+    func testChildTimeMustStayInsidePlanRange() async throws {
+        let store = makeStore()
+        let tz = store.currentTimeZone.identifier
+        let planStart = DateOnly(y: 2026, m: 10, d: 1, sourceTZ: tz)
+        let planEnd = DateOnly(y: 2026, m: 10, d: 31, sourceTZ: tz)
+        let plan = try await store.execute(CreatePlan(name: "十月", kind: .delivery,
+                                                      startAt: .day(planStart), endAt: .day(planEnd)))
+        let planID = try XCTUnwrap(plan.entityID)
+
+        await assertRejected(CreateTask(title: "超出范围", planID: planID,
+                                        startAt: .day(planEnd.adding(days: 2))), on: store)
+        let inside = try await store.execute(CreateTask(title: "范围内", planID: planID,
+                                                        startAt: .day(planStart.adding(days: 5)),
+                                                        endAt: .day(planStart.adding(days: 6))))
+        XCTAssertNotNil(inside.entityID)
+    }
+
+    func testPlanWithoutEndDoesNotConstrainChildren() async throws {
+        let store = makeStore()
+        let tz = store.currentTimeZone.identifier
+        let planStart = DateOnly(y: 2026, m: 10, d: 1, sourceTZ: tz)
+        let plan = try await store.execute(CreatePlan(name: "只有开始", kind: .delivery,
+                                                      startAt: .day(planStart)))
+        let planID = try XCTUnwrap(plan.entityID)
+        let task = try await store.execute(CreateTask(title: "很晚的事", planID: planID,
+                                                      startAt: .day(planStart.adding(days: 400))))
+        XCTAssertNotNil(task.entityID)
+    }
+
+    func testShrinkingPlanBelowOpenChildIsRejected() async throws {
+        let store = makeStore()
+        let tz = store.currentTimeZone.identifier
+        let planStart = DateOnly(y: 2026, m: 10, d: 1, sourceTZ: tz)
+        let planEnd = DateOnly(y: 2026, m: 10, d: 31, sourceTZ: tz)
+        let plan = try await store.execute(CreatePlan(name: "十月", kind: .delivery,
+                                                      startAt: .day(planStart), endAt: .day(planEnd)))
+        let planID = try XCTUnwrap(plan.entityID)
+        _ = try await store.execute(CreateTask(title: "月末任务", planID: planID,
+                                               endAt: .day(planEnd.adding(days: -1))))
+        let stored = await store.repository.plan(planID)
+        let current = try XCTUnwrap(stored)
+
+        var patch = PlanPatch()
+        patch.endAt = .day(planStart.adding(days: 10))
+        await assertRejected(UpdatePlan(planID: planID, patch: patch, baseRevision: current.revision), on: store)
+    }
+
+    func testRecurrenceDailyTimesProduceInstantRange() throws {
+        let tz = "Asia/Shanghai"
+        let rule = RecurrenceRule(taskId: UUID(), pattern: .daily,
+                                  effectiveFrom: DateOnly(y: 2026, m: 10, d: 1, sourceTZ: tz),
+                                  dailyStart: TimeOfDay(hour: 8, minute: 0),
+                                  dailyEnd: TimeOfDay(hour: 8, minute: 30))
+        let day = DateOnly(y: 2026, m: 10, d: 2, sourceTZ: tz)
+        let start = try XCTUnwrap(rule.occurrenceStart(on: day).instantValue)
+        let end = try XCTUnwrap(rule.occurrenceEnd(on: day)?.instantValue)
+        XCTAssertEqual(end.epoch.timeIntervalSince(start.epoch), 1_800)
+        XCTAssertEqual(rule.occurrenceStart(on: day).clockText, "08:00")
+
+        let allDay = RecurrenceRule(taskId: UUID(), pattern: .daily,
+                                    effectiveFrom: DateOnly(y: 2026, m: 10, d: 1, sourceTZ: tz))
+        XCTAssertFalse(allDay.occurrenceStart(on: day).isInstant)
+        XCTAssertNil(allDay.occurrenceEnd(on: day))
+    }
+
+    func testLegacyTaskPayloadMapsToStartAndEnd() throws {
+        let legacy = """
+        {"id":"00000000-0000-4000-8000-0000000000A1","title":"旧任务","isTemplate":false,
+         "status":"todo","tags":[],"dependencyIDs":[],"source":"manual","suggestedFields":[],
+         "createdAt":"2026-09-01T00:00:00Z","updatedAt":"2026-09-01T00:00:00Z","revision":1,
+         "scheduledDate":{"y":2026,"m":9,"d":28,"sourceTZ":"Asia/Shanghai"},
+         "timeHint":{"exact":{"hour":9,"minute":30}},
+         "hardDeadline":{"epoch":"2026-09-29T07:00:00Z","tzID":"Asia/Shanghai"}}
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let task = try decoder.decode(Task.self, from: Data(legacy.utf8))
+        XCTAssertEqual(task.startAt?.clockText, "09:30")
+        XCTAssertEqual(task.startAt?.dateOnly.iso8601DateString, "2026-09-28")
+        XCTAssertEqual(task.endAt?.instantValue?.tzID, "Asia/Shanghai")
+
+        let vague = legacy.replacingOccurrences(of: "{\"exact\":{\"hour\":9,\"minute\":30}}",
+                                                with: "{\"morning\":{}}")
+        let migrated = try decoder.decode(Task.self, from: Data(vague.utf8))
+        XCTAssertEqual(migrated.startAt?.isInstant, false, "模糊时段不虚构时刻")
+    }
+
+    func testLegacyPlanTargetDateBecomesEnd() throws {
+        let legacy = """
+        {"id":"00000000-0000-4000-8000-0000000000B1","name":"旧计划","kind":"delivery",
+         "aliases":[],"contextPhrases":[],"excludedTerms":[],"cloudAIEnabled":true,"syncEnabled":true,
+         "status":"active","sortIndex":0,
+         "createdAt":"2026-09-01T00:00:00Z","updatedAt":"2026-09-01T00:00:00Z","revision":1,
+         "targetDate":{"y":2026,"m":10,"d":9,"sourceTZ":"Asia/Shanghai"}}
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let plan = try decoder.decode(Plan.self, from: Data(legacy.utf8))
+        XCTAssertNil(plan.startAt)
+        XCTAssertEqual(plan.endAt?.dateOnly.iso8601DateString, "2026-10-09")
     }
 
     // MARK: - 幂等（同一 operationID 只生效一次）

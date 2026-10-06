@@ -63,9 +63,11 @@ public struct CustomProviderConfig: Sendable, Codable, Equatable, Hashable {
 
 // MARK: - 持久化的 AI 选择
 
-/// 设置页选定的厂商、模型与自定义厂商配置。整体作为一个值持久化，便于版本演进。
+/// 设置页选定的厂商、模型、自定义厂商配置与全局 AI 开关。整体作为一个值持久化，便于版本演进。
 public struct AISettings: Sendable, Codable, Equatable {
 
+    public var globalAIEnabled: Bool
+    public var hasShownPrivacyNotice: Bool
     public var vendor: AIVendor
     /// 内置厂商选中的模型 id；自定义厂商等于用户填写的模型 ID。
     public var model: String
@@ -73,12 +75,29 @@ public struct AISettings: Sendable, Codable, Equatable {
 
     public static let `default` = AISettings()
 
-    public init(vendor: AIVendor = .deepseek,
+    public init(globalAIEnabled: Bool = true,
+                hasShownPrivacyNotice: Bool = false,
+                vendor: AIVendor = .deepseek,
                 model: String = "",
                 custom: CustomProviderConfig = .empty) {
+        self.globalAIEnabled = globalAIEnabled
+        self.hasShownPrivacyNotice = hasShownPrivacyNotice
         self.vendor = vendor
         self.model = model
         self.custom = custom
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.globalAIEnabled = try container.decodeIfPresent(Bool.self, forKey: .globalAIEnabled) ?? true
+        self.hasShownPrivacyNotice = try container.decodeIfPresent(Bool.self, forKey: .hasShownPrivacyNotice) ?? false
+        self.vendor = try container.decodeIfPresent(AIVendor.self, forKey: .vendor) ?? .deepseek
+        self.model = try container.decodeIfPresent(String.self, forKey: .model) ?? ""
+        self.custom = try container.decodeIfPresent(CustomProviderConfig.self, forKey: .custom) ?? .empty
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case globalAIEnabled, hasShownPrivacyNotice, vendor, model, custom
     }
 }
 

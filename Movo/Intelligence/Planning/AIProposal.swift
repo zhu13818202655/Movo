@@ -69,12 +69,9 @@ public struct AIDateInterpretation: Sendable, Hashable, Codable {
     public var rawText: String?
     public var resolvedDate: String?
     public var granularity: String?
-    public var isHardDeadline: Bool
 
-    public init(rawText: String? = nil, resolvedDate: String? = nil,
-                granularity: String? = nil, isHardDeadline: Bool = false) {
-        self.rawText = rawText; self.resolvedDate = resolvedDate
-        self.granularity = granularity; self.isHardDeadline = isHardDeadline
+    public init(rawText: String? = nil, resolvedDate: String? = nil, granularity: String? = nil) {
+        self.rawText = rawText; self.resolvedDate = resolvedDate; self.granularity = granularity
     }
 }
 
@@ -103,31 +100,70 @@ public struct AINote: Sendable, Hashable, Codable {
     }
 }
 
+/// 步骤块（重复任务模板下挂的执行步骤，支持多级）
+public struct AIProposalStep: Sendable, Hashable, Codable {
+    public var ref: String?
+    public var parentRef: String?
+    public var title: String
+    public var notes: String?
+    public var steps: [AIProposalStep]
+
+    public init(ref: String? = nil, parentRef: String? = nil,
+                title: String, notes: String? = nil,
+                steps: [AIProposalStep] = []) {
+        self.ref = ref; self.parentRef = parentRef
+        self.title = title; self.notes = notes
+        self.steps = steps
+    }
+}
+
+/// 阶段块（创建计划时可选带阶段）
+public struct AIProposalStage: Sendable, Hashable, Codable {
+    public var ref: String?
+    public var name: String
+    public var startAt: String?
+    public var endAt: String?
+
+    public init(ref: String? = nil, name: String, startAt: String? = nil, endAt: String? = nil) {
+        self.ref = ref; self.name = name; self.startAt = startAt; self.endAt = endAt
+    }
+}
+
 /// 任务相关块（create/update/schedule/complete/dependency 共用）
 public struct AIProposalTask: Sendable, Hashable, Codable {
+    public var ref: String?
     public var candidateTaskId: String?
     public var title: String?
     public var notes: String?
     public var planId: String?
     public var stageId: String?
     public var parentTaskId: String?
-    public var scheduledDate: String?
-    public var hardDeadline: String?
+    public var stageRef: String?
+    public var parentRef: String?
+    /// yyyy-MM-dd（某一天）或带时区的 ISO8601（某一时刻）；没把握就不填
+    public var startAt: String?
+    public var endAt: String?
     public var estimateMinutes: Int?
     public var priority: String?
     public var tags: [String]
     public var dependencyIds: [String]
+    public var recurrence: AIRecurrence?
+    public var steps: [AIProposalStep]
 
-    public init(candidateTaskId: String? = nil, title: String? = nil, notes: String? = nil,
+    public init(ref: String? = nil, candidateTaskId: String? = nil, title: String? = nil, notes: String? = nil,
                 planId: String? = nil, stageId: String? = nil, parentTaskId: String? = nil,
-                scheduledDate: String? = nil, hardDeadline: String? = nil,
+                stageRef: String? = nil, parentRef: String? = nil,
+                startAt: String? = nil, endAt: String? = nil,
                 estimateMinutes: Int? = nil, priority: String? = nil,
-                tags: [String] = [], dependencyIds: [String] = []) {
-        self.candidateTaskId = candidateTaskId; self.title = title; self.notes = notes
+                tags: [String] = [], dependencyIds: [String] = [],
+                recurrence: AIRecurrence? = nil, steps: [AIProposalStep] = []) {
+        self.ref = ref; self.candidateTaskId = candidateTaskId; self.title = title; self.notes = notes
         self.planId = planId; self.stageId = stageId; self.parentTaskId = parentTaskId
-        self.scheduledDate = scheduledDate; self.hardDeadline = hardDeadline
+        self.stageRef = stageRef; self.parentRef = parentRef
+        self.startAt = startAt; self.endAt = endAt
         self.estimateMinutes = estimateMinutes; self.priority = priority
         self.tags = tags; self.dependencyIds = dependencyIds
+        self.recurrence = recurrence; self.steps = steps
     }
 }
 
@@ -148,16 +184,21 @@ public struct AIRecurrence: Sendable, Hashable, Codable {
 // MARK: - 单条提议
 
 public struct AIProposalPlan: Sendable, Hashable, Codable {
+    public var ref: String?
     public var name: String
     public var kind: PlanKind
     public var goal: String?
-    public var targetDate: String?
+    public var startAt: String?
+    public var endAt: String?
+    public var stages: [AIProposalStage]
     public var tasks: [AIProposalTask]
 
-    public init(name: String, kind: PlanKind, goal: String? = nil,
-                targetDate: String? = nil, tasks: [AIProposalTask] = []) {
-        self.name = name; self.kind = kind; self.goal = goal
-        self.targetDate = targetDate; self.tasks = tasks
+    public init(ref: String? = nil, name: String, kind: PlanKind, goal: String? = nil,
+                startAt: String? = nil, endAt: String? = nil,
+                stages: [AIProposalStage] = [], tasks: [AIProposalTask] = []) {
+        self.ref = ref; self.name = name; self.kind = kind; self.goal = goal
+        self.startAt = startAt; self.endAt = endAt
+        self.stages = stages; self.tasks = tasks
     }
 }
 
@@ -181,7 +222,7 @@ public struct AIProposalItem: Sendable, Hashable, Codable {
                 task: AIProposalTask? = nil, plan: AIProposalPlan? = nil,
                 dateInterpretation: AIDateInterpretation? = nil,
                 recurrence: AIRecurrence? = nil, measurement: AIMeasurement? = nil,
-                note: AINote? = nil, confidence: Double = 0, needsConfirmation: Bool = false,
+                note: AINote? = nil, confidence: Double = 0, needsConfirmation: Bool = true,
                 reason: String? = nil, clarificationQuestion: String? = nil) {
         self.sourceSpan = sourceSpan; self.span = span; self.action = action
         self.task = task; self.plan = plan; self.dateInterpretation = dateInterpretation
@@ -193,7 +234,7 @@ public struct AIProposalItem: Sendable, Hashable, Codable {
     /// 稳定标识（用于去重、收件箱展示与列表 id）
     public var id: String {
         [action.rawValue, sourceSpan ?? span.map(String.init).joined(separator: "-"),
-         task?.candidateTaskId ?? task?.title ?? plan?.name ?? "", task?.scheduledDate ?? "",
+         task?.ref ?? task?.candidateTaskId ?? task?.title ?? plan?.name ?? "", task?.startAt ?? "",
          measurement?.metricId ?? "", measurement?.measuredAt ?? "", note?.text ?? ""].joined(separator: "|")
     }
 
@@ -213,12 +254,24 @@ public struct AIProposalItem: Sendable, Hashable, Codable {
         switch action {
         case .createPlan:
             return ["plan"]
-        case .createTask, .updateTask, .matchOccurrence, .completeTask,
+        case .createTask:
+            return ["task", "recurrence"]
+        case .updateTask, .matchOccurrence, .completeTask,
              .scheduleExistingTask, .setDependency:
             return ["task"]
         case .logActivity:
             return ["task", "note"]
         case .recordMeasurement:
+            return ["measurement"]
+        case .saveNote:
+            return ["note"]
+        case .setRecurrence:
+            return ["task", "recurrence"]
+        case .needsClarification:
+            return []
+        }
+    }
+}
             return ["measurement"]
         case .saveNote:
             return ["note"]
@@ -263,43 +316,6 @@ public enum AIProposalSchema {
 
     /// 与 `AIProposalItem` 严格对应的 JSON Schema
     public static var jsonSchema: [String: JSONValue] {
-        let taskBlock: JSONValue = .object([
-            "type": .string("object"),
-            "properties": .object([
-                "candidate_task_id": .object(["type": .string("string")]),
-                "title": .object(["type": .string("string")]),
-                "notes": .object(["type": .string("string")]),
-                "plan_id": .object(["type": .string("string")]),
-                "stage_id": .object(["type": .string("string")]),
-                "parent_task_id": .object(["type": .string("string")]),
-                "scheduled_date": .object(["type": .string("string"), "description": .string("yyyy-MM-dd")]),
-                "hard_deadline": .object(["type": .string("string"), "description": .string("含时刻与时区的 ISO8601")]),
-                "estimate_minutes": .object(["type": .string("integer")]),
-                "priority": .object(["type": .string("string"), "enum": .array([.string("low"), .string("normal"), .string("high")])]),
-                "tags": .object(["type": .string("array"), "items": .object(["type": .string("string")])]),
-                "dependency_ids": .object(["type": .string("array"), "items": .object(["type": .string("string")])])
-            ])
-        ])
-        let dateInterpretation: JSONValue = .object([
-            "type": .string("object"),
-            "properties": .object([
-                "raw_text": .object(["type": .string("string")]),
-                "resolved_date": .object(["type": .string("string")]),
-                "granularity": .object(["type": .string("string")]),
-                "is_hard_deadline": .object(["type": .string("boolean")])
-            ])
-        ])
-        let planBlock: JSONValue = .object([
-            "type": .string("object"),
-            "properties": .object([
-                "name": .object(["type": .string("string")]),
-                "kind": .object(["type": .string("string"), "enum": .array(PlanKind.allCases.map { .string($0.rawValue) })]),
-                "goal": .object(["type": .string("string")]),
-                "target_date": .object(["type": .string("string"), "description": .string("yyyy-MM-dd，仅用户明确指定时填写")]),
-                "tasks": .object(["type": .string("array"), "maxItems": .int(10), "items": taskBlock])
-            ]),
-            "required": .array([.string("name"), .string("kind")])
-        ])
         let recurrenceBlock: JSONValue = .object([
             "type": .string("object"),
             "properties": .object([
@@ -308,6 +324,70 @@ public enum AIProposalSchema {
                 "weekdays": .object(["type": .string("array"), "items": .object(["type": .string("integer")])]),
                 "effective_from": .object(["type": .string("string")])
             ])
+        ])
+        let stepBlock: JSONValue = .object([
+            "type": .string("object"),
+            "properties": .object([
+                "ref": .object(["type": .string("string")]),
+                "parent_ref": .object(["type": .string("string")]),
+                "title": .object(["type": .string("string")]),
+                "notes": .object(["type": .string("string")])
+            ]),
+            "required": .array([.string("title")])
+        ])
+        let taskBlock: JSONValue = .object([
+            "type": .string("object"),
+            "properties": .object([
+                "ref": .object(["type": .string("string"), "description": .string("批内临时标识，如 task_1")]),
+                "candidate_task_id": .object(["type": .string("string")]),
+                "title": .object(["type": .string("string")]),
+                "notes": .object(["type": .string("string")]),
+                "plan_id": .object(["type": .string("string")]),
+                "stage_id": .object(["type": .string("string")]),
+                "parent_task_id": .object(["type": .string("string")]),
+                "stage_ref": .object(["type": .string("string"), "description": .string("批内引用的阶段 ref")]),
+                "parent_ref": .object(["type": .string("string"), "description": .string("批内引用的父任务 ref")]),
+                "start_at": .object(["type": .string("string"), "description": .string("开始时间：yyyy-MM-dd（某一天）或带时区的 ISO8601（某一时刻），没把握就不填")]),
+                "end_at": .object(["type": .string("string"), "description": .string("结束时间：格式同 start_at，没把握就不填")]),
+                "estimate_minutes": .object(["type": .string("integer")]),
+                "priority": .object(["type": .string("string"), "enum": .array([.string("low"), .string("normal"), .string("high")])]),
+                "tags": .object(["type": .string("array"), "items": .object(["type": .string("string")])]),
+                "dependency_ids": .object(["type": .string("array"), "items": .object(["type": .string("string")])]),
+                "recurrence": recurrenceBlock,
+                "steps": .object(["type": .string("array"), "items": stepBlock, "description": .string("仅重复任务可带执行步骤清单")])
+            ])
+        ])
+        let dateInterpretation: JSONValue = .object([
+            "type": .string("object"),
+            "properties": .object([
+                "raw_text": .object(["type": .string("string")]),
+                "resolved_date": .object(["type": .string("string")]),
+                "granularity": .object(["type": .string("string")])
+            ])
+        ])
+        let stageBlock: JSONValue = .object([
+            "type": .string("object"),
+            "properties": .object([
+                "ref": .object(["type": .string("string"), "description": .string("阶段临时标识，如 stage_1")]),
+                "name": .object(["type": .string("string")]),
+                "start_at": .object(["type": .string("string")]),
+                "end_at": .object(["type": .string("string")])
+            ]),
+            "required": .array([.string("name")])
+        ])
+        let planBlock: JSONValue = .object([
+            "type": .string("object"),
+            "properties": .object([
+                "ref": .object(["type": .string("string")]),
+                "name": .object(["type": .string("string")]),
+                "kind": .object(["type": .string("string"), "enum": .array(PlanKind.allCases.map { .string($0.rawValue) })]),
+                "goal": .object(["type": .string("string")]),
+                "start_at": .object(["type": .string("string"), "description": .string("yyyy-MM-dd 或带时区的 ISO8601，仅用户明确指定时填写")]),
+                "end_at": .object(["type": .string("string"), "description": .string("格式同 start_at，仅用户明确指定时填写")]),
+                "stages": .object(["type": .string("array"), "items": stageBlock]),
+                "tasks": .object(["type": .string("array"), "maxItems": .int(10), "items": taskBlock])
+            ]),
+            "required": .array([.string("name"), .string("kind")])
         ])
         let measurementBlock: JSONValue = .object([
             "type": .string("object"),
@@ -341,13 +421,12 @@ public enum AIProposalSchema {
                 "recurrence": recurrenceBlock,
                 "measurement": measurementBlock,
                 "note": noteBlock,
-                "confidence": .object(["type": .string("number")]),
                 "needs_confirmation": .object(["type": .string("boolean")]),
                 "reason": .object(["type": .string("string")]),
                 "clarification_question": .object(["type": .string("string")])
             ]),
             "required": .array([.string("source_span"), .string("span"), .string("action"),
-                                .string("confidence"), .string("needs_confirmation")])
+                                .string("needs_confirmation")])
         ])
         return [
             "type": .string("object"),

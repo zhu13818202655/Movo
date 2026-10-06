@@ -27,7 +27,7 @@ public enum RecoveryAction: Hashable, Sendable, Codable {
         case .openSettings(let s): s == .ai ? "去填写 Key" : "打开设置"
         case .refresh: "刷新后重试"
         case .viewConflicts: "查看冲突"
-        case .viewInbox: "去收件箱"
+        case .viewInbox: "查看整理记录"
         case .dismiss: "知道了"
         case .restoreFromRecentlyDeleted: "去最近删除"
         case .choosePlan: "选择计划"
@@ -67,7 +67,6 @@ public enum RejectReason: Hashable, Sendable, Codable, CustomStringConvertible {
     case incompleteRecurrence
     case invalidMeasurementValue
     case unitMismatch
-    case planNotCloudAIEnabled
     case planArchived
     case duplicateInBatch
     case inputTooLong
@@ -94,7 +93,6 @@ public enum RejectReason: Hashable, Sendable, Codable, CustomStringConvertible {
         case .incompleteRecurrence: "重复规则字段不完整"
         case .invalidMeasurementValue: "数值无效"
         case .unitMismatch: "单位与指标不一致"
-        case .planNotCloudAIEnabled: "该计划未允许云 AI 处理"
         case .planArchived: "目标计划已归档"
         case .duplicateInBatch: "同一批中有重复项"
         case .inputTooLong: "输入过长，已截断"

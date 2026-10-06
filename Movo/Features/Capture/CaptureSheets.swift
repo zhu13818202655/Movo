@@ -92,7 +92,7 @@ public struct QuickCaptureSheet: View {
             isVisible = true
             if mode == .voice, !env.isProcessing, !env.isSubmittingCapture { env.continueCapturing() }
             let deleted = Set(await env.store.repository.tombstones(activeOnly: true).map(\.entityId))
-            plans = await env.store.repository.allPlans().filter { $0.status == .active && $0.cloudAIEnabled && !deleted.contains($0.id) }
+            plans = await env.store.repository.allPlans().filter { $0.status == .active && !deleted.contains($0.id) }
             if let selected = env.capturePlanID, !plans.contains(where: { $0.id == selected }) { env.capturePlanID = nil }
             if let id = env.activeCaptureID { await env.restoreCaptureResult(id) }
         }

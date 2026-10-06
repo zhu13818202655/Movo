@@ -194,7 +194,9 @@ public final class SwiftDataRepository: DomainRepository {
     }
 
     public func templateTasks() async -> [Task] {
-        fetch(TaskM.self, #Predicate<TaskM> { $0.isTemplate }).compactMap(LocalAdapter.toDomain)
+        fetch(TaskM.self, #Predicate<TaskM> { $0.isTemplate })
+            .compactMap(LocalAdapter.toDomain)
+            .filter { !$0.isStep }
     }
 
     public func upsert(_ task: Task) async throws {

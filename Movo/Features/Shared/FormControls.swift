@@ -125,6 +125,87 @@ public struct MovoDateField: View {
     }
 }
 
+// MARK: - 起止时间字段
+
+/// 起止时间的编辑状态：未设置 / 某一天 / 某一时刻（界面到分钟，存储到秒）。
+public struct TimePointDraft: Hashable {
+    public var isOn: Bool
+    /// true = 某一时刻；false = 某一天
+    public var hasTime: Bool
+    public var date: Date
+
+    public init(isOn: Bool = false, hasTime: Bool = false, date: Date = Date()) {
+        self.isOn = isOn; self.hasTime = hasTime; self.date = date
+    }
+
+    public init(_ point: TimePoint?, fallback: Date = Date()) {
+        var on = false
+        var timed = false
+        var value = fallback
+        if let point {
+            on = true
+            switch point {
+            case .day(let day):
+                value = day.pickerDate
+            case .instant(let instant):
+                timed = true
+                value = instant.epoch
+            }
+        }
+        self.isOn = on; self.hasTime = timed; self.date = value
+    }
+
+    public func point(in tz: TimeZone) -> TimePoint? {
+        guard isOn else { return nil }
+        if hasTime {
+            let minute = (date.timeIntervalSince1970 / 60).rounded(.down) * 60
+            return .instant(DateTimeTZ(Date(timeIntervalSince1970: minute), in: tz))
+        }
+        return .day(DateOnly(from: date, in: tz))
+    }
+}
+
+/// 可开关的起止时间字段：未设置、某一天、某一时刻三种状态。
+public struct MovoTimePointField: View {
+    private let title: String
+    private let placeholder: String
+    @Binding private var draft: TimePointDraft
+    private let timeZone: TimeZone
+
+    public init(_ title: String, placeholder: String = "未设置",
+                draft: Binding<TimePointDraft>, timeZone: TimeZone) {
+        self.title = title; self.placeholder = placeholder
+        self._draft = draft; self.timeZone = timeZone
+    }
+
+    public var body: some View {
+        VStack(alignment: .leading, spacing: MovoSpace.s) {
+            Toggle(isOn: $draft.isOn) {
+                Text(title).font(MovoFont.bodyEmphasis).foregroundStyle(MovoColor.ink)
+            }
+            .toggleStyle(.switch)
+            .controlSize(.small)
+
+            if draft.isOn {
+                Toggle(isOn: $draft.hasTime) {
+                    Text("精确到时刻").font(MovoFont.caption).foregroundStyle(MovoColor.muted)
+                }
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+
+                DatePicker("", selection: $draft.date,
+                           displayedComponents: draft.hasTime ? [.date, .hourAndMinute] : [.date])
+                    .labelsHidden()
+                    .datePickerStyle(.compact)
+                    .environment(\.timeZone, timeZone)
+                    .accessibilityLabel(title)
+            } else {
+                Text(placeholder).font(MovoFont.caption).foregroundStyle(MovoColor.muted)
+            }
+        }
+    }
+}
+
 // MARK: - 单选标签行
 
 public struct MovoChipRow<Value: Hashable & Identifiable>: View {

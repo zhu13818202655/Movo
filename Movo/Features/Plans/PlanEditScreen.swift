@@ -22,9 +22,8 @@ public struct PlanEditScreen: View {
     @State private var kind: PlanKind = .delivery
     @State private var category: PlanCategory?
     @State private var goal = ""
-    @State private var hasTargetDate = false
-    @State private var targetDate = Date()
-    @State private var cloudAIEnabled = true
+    @State private var startDraft = TimePointDraft()
+    @State private var endDraft = TimePointDraft()
     @State private var syncEnabled = true
     @State private var aliasesText = ""
     @State private var contextPhrasesText = ""
@@ -42,6 +41,8 @@ public struct PlanEditScreen: View {
         var version: Int = 1
         var name = ""
         var criteria = ""
+        var startDraft = TimePointDraft()
+        var endDraft = TimePointDraft()
     }
 
     struct MetricDraftRow: Identifiable, Hashable {
@@ -101,10 +102,10 @@ public struct PlanEditScreen: View {
                 }
 
                 MovoFormSection("时间", footnote: kind.requiresEndDate
-                                ? "交付型与改善型建议设定目标日期；它不会自动变成任务截止时间。"
+                                ? "交付型与改善型建议设定结束时间；阶段和任务的时间必须落在计划范围内。"
                                 : "持续型没有结束日期，也不需要强制阶段。") {
-                    MovoDateField("设定目标日期", placeholder: "未设定",
-                                  isOn: $hasTargetDate, date: $targetDate, timeZone: timeZone)
+                    MovoTimePointField("开始时间", placeholder: "未设定", draft: $startDraft, timeZone: timeZone)
+                    MovoTimePointField("结束时间", placeholder: "未设定", draft: $endDraft, timeZone: timeZone)
                 }
 
                 MovoFormSection("阶段（可选）",
@@ -116,6 +117,10 @@ public struct PlanEditScreen: View {
                             MovoTextField("达成条件（可选）", text: $stages[index].criteria,
                                           placeholder: "例如：7 个叶子任务全部完成",
                                           axis: .vertical)
+                            MovoTimePointField("阶段开始时间", placeholder: "未设定",
+                                               draft: $stages[index].startDraft, timeZone: timeZone)
+                            MovoTimePointField("阶段结束时间", placeholder: "未设定",
+                                               draft: $stages[index].endDraft, timeZone: timeZone)
                             HStack {
                                 Spacer(minLength: 0)
                                 if stages[index].existingID == nil {
@@ -170,23 +175,18 @@ public struct PlanEditScreen: View {
                     }
                 }
 
-                MovoFormSection("AI 与同步",
-                                footnote: "两个开关彼此独立：关闭云 AI 只影响整理，不影响是否同步。") {
-                    Toggle(isOn: $cloudAIEnabled) {
+                MovoFormSection("同步") {
+                    Toggle(isOn: $syncEnabled) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("允许云端 AI 处理").font(MovoFont.bodyEmphasis)
+                            Text("同步此计划到 iCloud").font(MovoFont.bodyEmphasis)
                                 .foregroundStyle(MovoColor.ink)
-                            Text("关闭后这个计划的内容只在设备上整理。健康类计划默认关闭。")
+                            Text("关闭后仅保存在此设备上。")
                                 .font(MovoFont.caption).foregroundStyle(MovoColor.muted)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                     .toggleStyle(.switch)
-
-                    Toggle(isOn: $syncEnabled) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("同步此计划到 iCloud").font(MovoFont.bodyEmphasis)
-                                .foregroundStyle(MovoColor.ink)
+                }
                             Text("关闭后只保留在本机，不影响云 AI 开关。")
                                 .font(MovoFont.caption).foregroundStyle(MovoColor.muted)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -243,19 +243,18 @@ public struct PlanEditScreen: View {
         kind = plan.kind
         category = plan.category
         goal = plan.goalText ?? ""
-        cloudAIEnabled = plan.cloudAIEnabled
         syncEnabled = plan.syncEnabled
         aliasesText = plan.aliases.joined(separator: ", ")
         contextPhrasesText = plan.contextPhrases.joined(separator: ", ")
-        if let target = plan.targetDate {
-            hasTargetDate = true
-            targetDate = target.pickerDate
-        }
+        startDraft = TimePointDraft(plan.startAt, fallback: env.store.now)
+        endDraft = TimePointDraft(plan.endAt, fallback: env.store.now)
         let existingStages = await env.store.repository.stages(planID: planID)
             .sorted { $0.sortIndex < $1.sortIndex }
         stages = existingStages.map {
             StageDraftRow(existingID: $0.id, version: $0.version,
-                          name: $0.name, criteria: $0.criteriaText ?? "")
+                          name: $0.name, criteria: $0.criteriaText ?? "",
+                          startDraft: TimePointDraft($0.startAt, fallback: env.store.now),
+                          endDraft: TimePointDraft($0.endAt, fallback: env.store.now))
         }
         let existingMetrics = await env.store.repository.metrics(planID: planID)
         metrics = existingMetrics.map {
@@ -281,7 +280,8 @@ public struct PlanEditScreen: View {
         isSaving = true
         defer { isSaving = false }
 
-        let target: DateOnly? = hasTargetDate ? DateOnly(from: targetDate, in: timeZone) : nil
+        let start = startDraft.point(in: timeZone)
+        let end = endDraft.point(in: timeZone)
         let aliases = Self.splitList(aliasesText)
         let phrases = Self.splitList(contextPhrasesText)
 
@@ -292,10 +292,12 @@ public struct PlanEditScreen: View {
                 patch.kind = kind
                 patch.category = category
                 patch.goalText = goal
-                patch.targetDate = target
+                patch.startAt = start
+                patch.endAt = end
+                patch.clearStartAt = start == nil
+                patch.clearEndAt = end == nil
                 patch.aliases = aliases
                 patch.contextPhrases = phrases
-                patch.cloudAIEnabled = cloudAIEnabled
                 patch.syncEnabled = syncEnabled
                 try await env.store.execute(UpdatePlan(planID: planID, patch: patch,
                                                        baseRevision: original.revision))
@@ -306,7 +308,9 @@ public struct PlanEditScreen: View {
                 var metricDrafts: [MetricDraft] = []
                 for row in stages where !row.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     drafts.append(StageDraft(name: row.name.trimmingCharacters(in: .whitespacesAndNewlines),
-                                             criteriaText: row.criteria.isEmpty ? nil : row.criteria))
+                                             criteriaText: row.criteria.isEmpty ? nil : row.criteria,
+                                             startAt: row.startDraft.point(in: timeZone),
+                                             endAt: row.endDraft.point(in: timeZone)))
                 }
                 for row in metrics where !row.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     metricDrafts.append(MetricDraft(
@@ -317,10 +321,10 @@ public struct PlanEditScreen: View {
                 }
                 try await env.store.execute(CreatePlan(
                     name: trimmedName, kind: kind, category: category,
-                    goal: goal.isEmpty ? nil : goal, targetDate: target,
+                    goal: goal.isEmpty ? nil : goal, startAt: start, endAt: end,
                     stages: drafts, metrics: metricDrafts,
                     aliases: aliases, contextPhrases: phrases,
-                    cloudAIEnabled: cloudAIEnabled, syncEnabled: syncEnabled))
+                    syncEnabled: syncEnabled))
             }
             env.lastBatchNotice = env.store.lastNotification
             router.pop()
@@ -338,18 +342,25 @@ public struct PlanEditScreen: View {
             let trimmed = row.name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }
             let criteria = row.criteria.isEmpty ? nil : row.criteria
+            let start = row.startDraft.point(in: timeZone)
+            let end = row.endDraft.point(in: timeZone)
             if let id = row.existingID {
                 guard let current = existing.first(where: { $0.id == id }) else { continue }
                 var patch = StagePatch()
                 if current.name != trimmed { patch.name = trimmed }
                 if current.criteriaText != criteria { patch.criteriaText = criteria ?? "" }
+                if current.startAt != start { patch.startAt = start; patch.clearStartAt = start == nil }
+                if current.endAt != end { patch.endAt = end; patch.clearEndAt = end == nil }
                 if current.sortIndex != index { patch.sortIndex = index }
-                guard !(patch.name == nil && patch.criteriaText == nil && patch.sortIndex == nil) else { continue }
+                guard !(patch.name == nil && patch.criteriaText == nil && patch.sortIndex == nil
+                        && patch.startAt == nil && patch.endAt == nil
+                        && !patch.clearStartAt && !patch.clearEndAt) else { continue }
                 try await env.store.execute(UpdateStage(stageID: id, patch: patch,
                                                         baseRevision: current.revision))
             } else {
                 try await env.store.execute(CreateStage(planID: planID, name: trimmed,
-                                                        criteriaText: criteria, sortIndex: index))
+                                                        criteriaText: criteria, startAt: start, endAt: end,
+                                                        sortIndex: index))
             }
         }
         // 被移除的阶段只做「不再出现在编辑列表中」处理，历史与记录保留

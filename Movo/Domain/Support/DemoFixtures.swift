@@ -89,7 +89,7 @@ public enum DemoFixtures {
         // 独立生活待办「买牛奶」：今天，不属于任何长期计划
         try await store.repository.upsert(Task(
             id: IDs.buyMilk, planId: nil, title: "买牛奶", status: .todo,
-            scheduledDate: today, source: .manual,
+            startAt: .day(today), source: .manual,
             createdAt: now, updatedAt: now))
     }
 
@@ -105,7 +105,7 @@ public enum DemoFixtures {
         let plan = Plan(id: IDs.workPlan, name: "季度工作汇报", kind: .delivery,
                         category: .work,
                         goalText: "把这一季度的进展讲清楚，并给出下一步计划",
-                        targetDate: day(10, 9),
+                        endAt: .day(day(10, 9)),
                         aliases: ["季度汇报", "工作汇报"],
                         cloudAIEnabled: true, status: .active,
                         createdAt: at(8, 31, 10, 0), updatedAt: now)
@@ -114,12 +114,12 @@ public enum DemoFixtures {
         // 阶段
         try await store.repository.upsert(Stage(
             id: IDs.stagePrepare, planId: plan.id, name: "资料准备",
-            criteriaText: "销售数据与口径核对完成", targetDate: day(9, 14),
+            criteriaText: "销售数据与口径核对完成", endAt: .day(day(9, 14)),
             status: .achieved, achievedAt: at(9, 14, 18, 0), sortIndex: 0,
             createdAt: at(8, 31, 10, 5)))
         try await store.repository.upsert(Stage(
             id: IDs.stageDraft, planId: plan.id, name: "形成初稿",
-            criteriaText: "初稿覆盖全部业务线", targetDate: day(9, 30),
+            criteriaText: "初稿覆盖全部业务线", endAt: .day(day(9, 30)),
             status: .inProgress, sortIndex: 1,
             createdAt: at(8, 31, 10, 6)))
         try await store.repository.upsert(Stage(
@@ -131,7 +131,7 @@ public enum DemoFixtures {
                   _ status: TaskStatus, scheduled: DateOnly? = nil,
                   createdAt: Date, doneAt: Date? = nil, cancelledAt: Date? = nil) -> Task {
             Task(id: id, planId: plan.id, stageId: stage, parentId: parent, title: title,
-                 status: status, scheduledDate: scheduled, tags: ["汇报"],
+                 status: status, startAt: scheduled.map { TimePoint.day($0) }, tags: ["汇报"],
                  source: .manual, doneAt: doneAt, cancelledAt: cancelledAt,
                  createdAt: createdAt, updatedAt: doneAt ?? cancelledAt ?? now)
         }
@@ -186,7 +186,7 @@ public enum DemoFixtures {
         // 重复行动：每周 3 次散步
         try await store.repository.upsert(Task(
             id: IDs.walkTemplate, planId: plan.id, title: "晚饭后散步",
-            isTemplate: true, status: .todo, timeHint: .evening, tags: ["运动"],
+            isTemplate: true, status: .todo, tags: ["运动"],
             source: .manual, createdAt: at(8, 31, 10, 35), updatedAt: now))
         try await store.repository.upsert(RecurrenceRule(
             id: IDs.walkRule, taskId: IDs.walkTemplate, pattern: .weeklyCount, weeklyCount: 3,

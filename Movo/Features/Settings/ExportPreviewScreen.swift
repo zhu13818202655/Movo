@@ -3,11 +3,10 @@
 //  Features/Settings
 //
 //  M13-Export / M13-Export-Details：导出预览（T1.8 / REQ 16）。
-//  · 范围：当前计划（从计划详情进入）或全部计划（从设置进入）。
-//  · 格式：Markdown / JSON；JSON 含依赖关系字段（AC18），导出后可被重新解析。
-//  · 敏感默认排除：未允许云 AI 的计划不进入默认导出集（AC16 本地部分），
-//    必须由用户显式打开「包含未允许云 AI 的计划」才会包含。
-//  · 空数据不填充虚构内容：没有计划时给出空状态，而不是造样本。
+//  · 范围：当前计划（从计划详情进入）或全部计划 + 独立待办（从设置进入）。
+//  · 格式：Markdown / Movo 文件（.movo.json）；Movo 文件可由「导入」读回。
+//  · 默认只导出结构和计划内容；行动记录、测量值、笔记默认不勾选，由用户自己打开。
+//  · 空数据不填充虚构内容：没有内容时给出空状态，而不是造样本。
 //
 
 import SwiftUI
@@ -29,9 +28,12 @@ public struct ExportPreviewScreen: View {
     /// nil = 导出全部计划
     let planID: UUID?
 
-    @State private var format: ExportFormat = .markdown
-    @State private var includeSensitive = false
+    @State private var format: ExportFormat = .json
+    @State private var includeRecords = false
+    @State private var includeMeasurements = false
+    @State private var includeNotes = false
     @State private var bundle: ExportBundle?
+    @State private var shareURL: URL?
     @State private var planName: String?
     @State private var isLoading = true
     @State private var copied = false
@@ -45,33 +47,38 @@ public struct ExportPreviewScreen: View {
     /// 读取本地全量数据并生成导出包。纯读取，不写入任何内容。
     public static func makeBundle(env: AppEnvironment, planID: UUID?,
                                   format: ExportFormat,
-                                  includeSensitive: Bool) async -> ExportBundle {
+                                  options: PlanFileOptions) async -> ExportBundle {
         let repository = env.store.repository
-        let plans = await repository.allPlans()
-        let tasks = await repository.allTasks()
-        let notes = await repository.allNotes()
-        let activities = await repository.allActivities()
-        let measurements = await repository.allMeasurements()
-        let rules = await repository.rules()
+        let deleted = Set(await repository.tombstones(activeOnly: true).map(\.entityId))
+        let plans = await repository.allPlans().filter { !deleted.contains($0.id) }
+        let tasks = await repository.allTasks().filter { !deleted.contains($0.id) }
+        let notes = await repository.allNotes().filter { !deleted.contains($0.id) }
+        let activities = await repository.allActivities().filter { !deleted.contains($0.id) }
+        let measurements = await repository.allMeasurements().filter { !deleted.contains($0.id) }
+        let rules = await repository.rules().filter { !deleted.contains($0.id) }
 
         var stages: [Stage] = []
         var metrics: [PlanMetric] = []
         var occurrences: [RecurrenceOccurrence] = []
         for plan in plans {
-            stages += await repository.stages(planID: plan.id)
-            metrics += await repository.metrics(planID: plan.id)
-            occurrences += await repository.occurrences(planID: plan.id)
+            stages += await repository.stages(planID: plan.id).filter { !deleted.contains($0.id) }
+            metrics += await repository.metrics(planID: plan.id).filter { !deleted.contains($0.id) }
+            occurrences += await repository.occurrences(planID: plan.id).filter { !deleted.contains($0.id) }
         }
 
-        let selections = ExportService.gather(
+        let scope = ExportService.gather(
             plans: plans, stages: stages, tasks: tasks, metrics: metrics,
             measurements: measurements, activities: activities, notes: notes,
             occurrences: occurrences, rules: rules, onlyPlanID: planID)
 
-        return ExportService.export(selections, format: format,
-                                    includeSensitive: includeSensitive,
+        return ExportService.export(scope, format: format, options: options,
                                     generatedAt: env.store.now,
                                     timeZone: env.store.currentTimeZone)
+    }
+
+    private var options: PlanFileOptions {
+        PlanFileOptions(includeRecords: includeRecords, includeMeasurements: includeMeasurements,
+                        includeNotes: includeNotes)
     }
 
     // MARK: - Body
@@ -86,32 +93,23 @@ public struct ExportPreviewScreen: View {
 
             if isLoading {
                 LoadingPlaceholder("正在汇总要导出的内容…")
-            } else if let bundle, bundle.includedPlanNames.isEmpty {
+            } else if let bundle, bundle.isEmpty {
                 MovoEmptyState(systemImage: "tray",
-                               title: "没有可导出的计划",
-                               message: sensitiveExcludedOnly
-                                   ? "当前范围内的计划都还没有允许云 AI。打开下面的开关才会包含它们。"
-                                   : "这个范围内还没有计划可以导出。先建一个计划再来。")
+                               title: "没有可导出的内容",
+                               message: "这个范围内还没有计划或待办可以导出。先建一个再来。")
                 optionsSection
             } else if let bundle {
-                if !bundle.excludedPlanNames.isEmpty {
-                    MovoBanner(kind: .info,
-                               title: "已默认排除 \(bundle.excludedPlanNames.count) 个敏感计划",
-                               message: "这些计划还没有允许云 AI（\(bundle.excludedPlanNames.joined(separator: "、"))）。"
-                                   + "如确需导出，请打开「包含未允许云 AI 的计划」。")
-                }
-
                 optionsSection
 
                 MovoFormSection("这次导出会包含", footnote: bundle.summaryText) {
-                    MovoInfoRow("范围", value: planID == nil ? "全部计划" : "当前计划", systemImage: "scope")
+                    MovoInfoRow("范围", value: planID == nil ? "全部计划和独立待办" : "当前计划", systemImage: "scope")
                     MovoInfoRow("格式", value: format.displayName, systemImage: "doc.text")
                     MovoInfoRow("计划数", value: "\(bundle.includedPlanNames.count) 个",
                                 systemImage: "square.stack.3d.up")
-                    MovoInfoRow("排除", value: bundle.excludedPlanNames.isEmpty
-                                ? "无"
-                                : "\(bundle.excludedPlanNames.count) 个敏感计划",
-                                systemImage: "eye.slash")
+                    if planID == nil {
+                        MovoInfoRow("独立待办", value: "\(bundle.standaloneTaskCount) 项",
+                                    systemImage: "checklist")
+                    }
                     MovoInfoRow("体积", value: bundle.byteCountText, systemImage: "internaldrive")
                     MovoInfoRow("文件名", value: bundle.fileName, systemImage: "doc")
                 }
@@ -123,6 +121,13 @@ public struct ExportPreviewScreen: View {
                         }
                         MovoButton("存储为文件", systemImage: "square.and.arrow.down", kind: .primary) {
                             isExporting = true
+                        }
+                        if let shareURL {
+                            ShareLink(item: shareURL) {
+                                Label("分享", systemImage: "square.and.arrow.up")
+                                    .font(MovoFont.bodyEmphasis)
+                                    .frame(minHeight: MovoSpace.minTouch)
+                            }
                         }
                         Spacer(minLength: 0)
                         if copied { MovoTag("已复制", systemImage: "checkmark") }
@@ -146,6 +151,10 @@ public struct ExportPreviewScreen: View {
         }
         .movoPageBackground()
         .task(id: reloadKey) { await regenerate() }
+        .onDisappear {
+            if let shareURL { try? FileManager.default.removeItem(at: shareURL) }
+            shareURL = nil
+        }
         .fileExporter(isPresented: $isExporting,
                       document: bundle.map { ExportFileDocument(text: $0.content) },
                       contentType: contentType,
@@ -163,22 +172,26 @@ public struct ExportPreviewScreen: View {
 
     private var optionsSection: some View {
         MovoFormSection("导出选项",
-                        footnote: "JSON 导出含稳定 ID、依赖关系、重复模板与实例、记录与结果，可被重新解析。") {
+                        footnote: "默认只导出计划、阶段、任务、重复规则、步骤和指标定义；下面三项需要时自己打开。文件不包含 API Key、音频和设备标识。") {
             MovoFormRow("格式") {
                 MovoRequiredChipRow(options: ExportFormat.allCases, selection: $format,
                                     label: \.displayName)
             }
-            Toggle(isOn: $includeSensitive) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("包含未允许云 AI 的计划").font(MovoFont.bodyEmphasis)
-                        .foregroundStyle(MovoColor.ink)
-                    Text("默认排除。健康等敏感计划只有你明确选择才会进入导出文件。")
-                        .font(MovoFont.caption).foregroundStyle(MovoColor.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .toggleStyle(.switch)
+            optionToggle("包含行动记录", detail: "每条记录的时间、时长和说明。", isOn: $includeRecords)
+            optionToggle("包含测量值", detail: "体重、成绩等结果指标的测量记录。", isOn: $includeMeasurements)
+            optionToggle("包含笔记", detail: "想法、决定和备忘。", isOn: $includeNotes)
         }
+    }
+
+    private func optionToggle(_ title: String, detail: String, isOn: Binding<Bool>) -> some View {
+        Toggle(isOn: isOn) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(MovoFont.bodyEmphasis).foregroundStyle(MovoColor.ink)
+                Text(detail).font(MovoFont.caption).foregroundStyle(MovoColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .toggleStyle(.switch)
     }
 
     // MARK: - 派生
@@ -190,21 +203,17 @@ public struct ExportPreviewScreen: View {
     }
 
     private var subtitle: String {
-        planID == nil ? "Markdown / JSON · 敏感计划默认排除" : "当前计划的完整档案"
+        planID == nil ? "Markdown / Movo 文件 · 记录、测量值、笔记默认不导出" : "当前计划的完整档案"
     }
 
     private var previewFootnote: String {
         format == .json
-            ? "JSON 结构可直接被重新解析后再导入，含前置任务字段。"
+            ? "Movo 文件（.movo.json）可在设置里「导入 Movo 文件」读回，含前置任务、重复规则和步骤。"
             : "Markdown 便于阅读与粘贴到其它工具，同样保留依赖与记录。"
     }
 
-    private var sensitiveExcludedOnly: Bool {
-        bundle?.excludedPlanNames.isEmpty == false
-    }
-
     private var reloadKey: String {
-        "\(planID?.uuidString ?? "all")|\(format.rawValue)|\(includeSensitive)"
+        "\(planID?.uuidString ?? "all")|\(format.rawValue)|\(includeRecords)|\(includeMeasurements)|\(includeNotes)"
     }
 
     private var contentType: UTType {
@@ -226,11 +235,25 @@ public struct ExportPreviewScreen: View {
             planName = await env.store.repository.plan(planID)?.name
         }
         let generated = await Self.makeBundle(env: env, planID: planID,
-                                              format: format, includeSensitive: includeSensitive)
+                                              format: format, options: options)
         bundle = generated
+        shareURL = Self.writeShareFile(generated, replacing: shareURL)
         copied = false
         savedMessage = nil
         isLoading = false
+    }
+
+    /// 系统分享需要一个真实文件：写到临时目录，重新生成时删掉上一份
+    private static func writeShareFile(_ bundle: ExportBundle, replacing old: URL?) -> URL? {
+        if let old { try? FileManager.default.removeItem(at: old) }
+        guard !bundle.isEmpty else { return nil }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(bundle.fileName)
+        do {
+            try Data(bundle.content.utf8).write(to: url, options: .atomic)
+            return url
+        } catch {
+            return nil
+        }
     }
 
     private func copy(_ text: String) {

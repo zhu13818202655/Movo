@@ -58,7 +58,7 @@ public struct TaskRow: View {
         }()
         self.config = TaskRowConfig(
             title: item.title, planName: planName, category: nil, status: status,
-            timeText: item.timeHint?.displayName,
+            timeText: item.timeText,
             dependencyText: item.dependency.isReady ? nil : item.dependency.badgeText,
             isCompletedToday: item.isCompletedToday,
             footnote: item.section == .completed ? nil : item.displayStatus)
@@ -182,9 +182,6 @@ public struct PlanRow: View {
                 if let target = summary.targetDateText {
                     MovoTag(target, systemImage: "calendar")
                 }
-                if !summary.cloudAIEnabled {
-                    MovoTag("仅本机", systemImage: "lock")
-                }
             }
 
             if summary.progress.showsPercentage {
@@ -265,6 +262,16 @@ public struct StageTreeNodeRow: View {
 
             if node.hiddenChildCount > 0 {
                 MovoTag("+\(node.hiddenChildCount)")
+            }
+
+            if case .stage(_, let done, let total) = node.kind, total > 0 {
+                MovoSegmentedProgressBar(
+                    segments: [StageProgressSegment(name: title, done: done, total: total)],
+                    totalDone: done,
+                    totalCount: total,
+                    isCompact: true
+                )
+                .frame(width: 48)
             }
         }
         .padding(.vertical, 6)

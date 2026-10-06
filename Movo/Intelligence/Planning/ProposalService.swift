@@ -62,14 +62,11 @@ public struct ProposalRequest: Sendable {
 public struct ProposalPreparation: Sendable {
 
     public var captureID: UUID?
-    public var privacy: PrivacySplitResult
-    public var localMatches: [LocalDirectMatch]
     public var input: AIInput?
     public var proposal: AIProposal?
     public var validated: ValidatedProposal
     public var usage: AIUsageRecord?
     public var skippedCloudCall: Bool
-    public var privacyViolations: [String]
     public var error: MovoError?
     /// 以下为提交后的事实，不以可执行命令数量冒充成功数量。
     public var appliedOperations: [Operation] = []
@@ -77,47 +74,37 @@ public struct ProposalPreparation: Sendable {
     public var undoSummary: String?
 
     public init(captureID: UUID? = nil,
-                privacy: PrivacySplitResult,
-                localMatches: [LocalDirectMatch] = [],
                 input: AIInput? = nil,
                 proposal: AIProposal? = nil,
                 validated: ValidatedProposal = ValidatedProposal(),
                 usage: AIUsageRecord? = nil,
                 skippedCloudCall: Bool = false,
-                privacyViolations: [String] = [],
                 error: MovoError? = nil) {
-        self.captureID = captureID; self.privacy = privacy; self.localMatches = localMatches
-        self.input = input; self.proposal = proposal; self.validated = validated
-        self.usage = usage; self.skippedCloudCall = skippedCloudCall
-        self.privacyViolations = privacyViolations; self.error = error
+        self.captureID = captureID; self.input = input; self.proposal = proposal
+        self.validated = validated; self.usage = usage; self.skippedCloudCall = skippedCloudCall
+        self.error = error
     }
 
     /// 可自动执行并撤销的命令（已含校验修正）
     public var autoCommands: [any DomainCommand] { validated.commands }
 
-    /// 本地可确定项（不发云、可直接提交）
-    public var deterministicLocalMatches: [LocalDirectMatch] {
-        localMatches.filter { $0.kind.isDeterministic && $0.command != nil }
-    }
-
     /// 需要用户确认的提议
     public var pendingProposals: [PendingProposal] { validated.needsConfirmation }
 
-    /// 校验未过项（进收件箱）
+    /// 校验未过项
     public var rejectedIssues: [ProposalIssue] { validated.issues }
 
     public var needsConfirmation: Bool { !validated.needsConfirmation.isEmpty }
 
     public var hasWork: Bool {
-        !autoCommands.isEmpty || !deterministicLocalMatches.isEmpty
-            || !pendingProposals.isEmpty || !rejectedIssues.isEmpty
+        !autoCommands.isEmpty || !pendingProposals.isEmpty || !rejectedIssues.isEmpty
     }
 
     /// 部分完成：有错误、有待确认、或有需要补充信息的项
     public var isPartial: Bool {
         if undoSummary != nil { return false }
         return error != nil || needsConfirmation || !rejectedIssues.isEmpty || !commitRejections.isEmpty
-            || localMatches.contains { !$0.kind.isDeterministic } || validated.truncationNotice != nil
+            || validated.truncationNotice != nil
     }
 
     /// 结果条文案（C9 结果态）
@@ -131,8 +118,7 @@ public struct ProposalPreparation: Sendable {
             return ExecutionPolicy.partialResultMessage(
                 appliedCount: applied,
                 pendingCount: pendingProposals.count,
-                rejectedCount: rejectedIssues.count + commitRejections.count
-                    + localMatches.filter { !$0.kind.isDeterministic }.count)
+                rejectedCount: rejectedIssues.count + commitRejections.count)
         }
         return ExecutionPolicy.autoResultMessage(appliedCount: applied)
     }
@@ -144,16 +130,13 @@ public struct ProposalService: Sendable {
 
     private let provider: any AIProvider
     private let defaults: AppDefaults
-    private let healthKeywords: [String]
     private let logger: RedactedLogger
 
     public init(provider: any AIProvider,
                 defaults: AppDefaults = .fallback,
-                healthKeywords: [String]? = nil,
                 logger: RedactedLogger = RedactedLogger()) {
         self.provider = provider
         self.defaults = defaults
-        self.healthKeywords = healthKeywords ?? ConfigLoader.loadHealthKeywords()
         self.logger = logger
     }
 
@@ -178,38 +161,15 @@ public struct ProposalService: Sendable {
 
     // MARK: 流水线
 
-    /// 执行 C2–C7。产出交由调用方经 `DomainCommand` 落地（C8）。
+    /// 执行提议生成与校验。产出交由用户预览确认后落地。
     public func prepare(_ request: ProposalRequest) async -> ProposalPreparation {
-        // C2 隐私分流
-        let excludedTermsByPlan = Dictionary(request.plans.map { ($0.id, $0.excludedTerms) },
-                                             uniquingKeysWith: { first, _ in first })
-        let privacy = PrivacySplitter.split(text: request.effectiveText,
-                                           plans: request.plans,
-                                           healthKeywords: healthKeywords,
-                                           excludedTermsByPlan: excludedTermsByPlan)
-
-        // C3 本地确定性直执（不发云）
-        let allTasks = request.tasksByPlan.values.flatMap { $0 }
-        let allOccurrences = request.occurrencesByTask.values.flatMap { $0 }
-        let localMatches = LocalDirectRouter.route(privacy: privacy,
-                                                   plans: request.plans,
-                                                   tasks: allTasks,
-                                                   occurrences: allOccurrences,
-                                                   today: request.today,
-                                                   now: Date(),
-                                                   source: request.source,
-                                                   captureID: request.captureID)
-
-        // 无可发送内容 → 不调用云（6.3 硬约束）
-        guard privacy.hasSendableContent else {
-            return ProposalPreparation(captureID: request.captureID,
-                                       privacy: privacy,
-                                       localMatches: localMatches,
-                                       skippedCloudCall: true)
+        let text = request.effectiveText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            return ProposalPreparation(captureID: request.captureID, skippedCloudCall: true)
         }
 
-        // C4 上下文构建
-        var input = AIContextBuilder.build(sendableText: privacy.sendableText,
+        // 上下文构建
+        var input = AIContextBuilder.build(sendableText: request.effectiveText,
                                            today: request.today,
                                            timeZone: request.timeZone,
                                            plans: request.plans,
@@ -223,23 +183,7 @@ public struct ProposalService: Sendable {
             input.instructions += "\n用户为本次新增待办指定了计划 plan_id=\(id.uuidString)。"
         }
 
-        // AC16 发送前二次断言
-        let restrictedPlans = request.plans.filter { !$0.cloudAIEnabled || $0.status != .active }
-        let violations = AIContextBuilder.assertNoRestrictedContent(input: input,
-                                                                   restrictedPlans: restrictedPlans,
-                                                                   restrictedTitles: [],
-                                                                   restrictedKeywords: healthKeywords)
-        guard violations.isEmpty else {
-            logger.logValidation(rejectedCount: violations.count, mergedDuplicates: 0, correctionCount: 0)
-            return ProposalPreparation(captureID: request.captureID,
-                                       privacy: privacy,
-                                       localMatches: localMatches,
-                                       input: input,
-                                       skippedCloudCall: true,
-                                       privacyViolations: violations)
-        }
-
-        // C5 调用模型
+        // 调用模型
         let started = Date()
         do {
             var proposal = try await provider.proposeOperations(input)
@@ -248,20 +192,19 @@ public struct ProposalService: Sendable {
             }
             if let selected = request.preferredPlanID, input.allowedPlanIDs.contains(selected) {
                 for index in proposal.items.indices where proposal.items[index].action == .createTask {
-                    // 用户指定归属优先；不能把允许范围之外的 ID 引入请求或命令。
                     proposal.items[index].task?.planId = selected.uuidString
-                    proposal.items[index].confidence = 1
                 }
             }
             let elapsedMs = Int(Date().timeIntervalSince(started) * 1000)
 
-            // C6 校验
+            // 校验
+            let allTasks = request.tasksByPlan.values.flatMap { $0 }
             let tasksByID = Dictionary(allTasks.map { ($0.id, $0) },
                                        uniquingKeysWith: { first, _ in first })
             var metricsByID: [UUID: PlanMetric] = [:]
             for metric in request.metricsByPlan.values.flatMap({ $0 }) { metricsByID[metric.id] = metric }
             var occurrencesByID: [UUID: RecurrenceOccurrence] = [:]
-            for occurrence in allOccurrences { occurrencesByID[occurrence.id] = occurrence }
+            for occurrence in request.occurrencesByTask.values.flatMap({ $0 }) { occurrencesByID[occurrence.id] = occurrence }
 
             let validated = ProposalValidator.validate(proposal: proposal,
                                                        input: input,
@@ -284,7 +227,7 @@ public struct ProposalService: Sendable {
                                       status: AIUsageRecord.successStatus,
                                       date: Date())
 
-            // 8.8 只记录元数据，不含任何正文
+            // 只记录元数据，不含任何正文
             logger.logAICall(provider: provider.id.rawValue, model: provider.currentModel,
                              status: AIUsageRecord.successStatus, latencyMs: usage.latencyMs,
                              promptTokens: usage.promptTokens, completionTokens: usage.completionTokens,
@@ -294,12 +237,24 @@ public struct ProposalService: Sendable {
                                  correctionCount: validated.corrections.count)
 
             return ProposalPreparation(captureID: request.captureID,
-                                       privacy: privacy,
-                                       localMatches: localMatches,
                                        input: input,
                                        proposal: proposal,
                                        validated: validated,
                                        usage: usage)
+        } catch let error as MovoError {
+            let elapsedMs = Int(Date().timeIntervalSince(started) * 1000)
+            logger.logAICall(provider: provider.id.rawValue, model: provider.currentModel,
+                             status: error.title, latencyMs: elapsedMs,
+                             promptTokens: 0, completionTokens: 0, itemCount: 0, rejectedCount: 0)
+            return ProposalPreparation(captureID: request.captureID,
+                                       input: input,
+                                       error: error)
+        } catch {
+            return ProposalPreparation(captureID: request.captureID,
+                                       input: input,
+                                       error: .aiFailed(stage: .unknown, cause: "unexpected"))
+        }
+    }
         } catch let error as MovoError {
             let elapsedMs = Int(Date().timeIntervalSince(started) * 1000)
             logger.logAICall(provider: provider.id.rawValue, model: provider.currentModel,

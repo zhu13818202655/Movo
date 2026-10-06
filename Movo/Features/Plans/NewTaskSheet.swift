@@ -12,8 +12,8 @@ struct NewTaskSheet: View {
     @State private var selectedPlan: UUID?
     @State private var plans: [PlanSummary] = []
     @State private var parent: MovoKit.Task?
-    @State private var hasDate = false
-    @State private var date = Date()
+    @State private var startDraft = TimePointDraft()
+    @State private var endDraft = TimePointDraft()
     @State private var priority = TaskPriority.normal
     @State private var saving = false
     @State private var error: String?
@@ -40,8 +40,10 @@ struct NewTaskSheet: View {
                     Text("继承父任务的计划与阶段")
                         .font(MovoFont.caption).foregroundStyle(MovoColor.muted)
                 }
-                MovoDateField("安排日期", placeholder: "未安排，可以稍后再定",
-                              isOn: $hasDate, date: $date, timeZone: env.store.currentTimeZone)
+                MovoTimePointField("开始时间", placeholder: "未设置，可以稍后再定",
+                                   draft: $startDraft, timeZone: env.store.currentTimeZone)
+                MovoTimePointField("结束时间", placeholder: "未设置，可以稍后再定",
+                                   draft: $endDraft, timeZone: env.store.currentTimeZone)
                 Picker("优先级", selection: $priority) {
                     ForEach(TaskPriority.allCases) { value in Text(value.displayName).tag(value) }
                 }
@@ -57,8 +59,9 @@ struct NewTaskSheet: View {
         .task {
             guard !loaded else { return }
             selectedPlan = planID
-            hasDate = scheduledToday
-            date = env.store.now
+            startDraft = TimePointDraft(scheduledToday ? TimePoint.day(env.store.today) : nil,
+                                        fallback: env.store.now)
+            endDraft = TimePointDraft(nil, fallback: env.store.now)
             plans = await env.store.plans()
             if let parentID { parent = await env.store.repository.task(parentID) }
             loaded = true
@@ -80,7 +83,8 @@ struct NewTaskSheet: View {
                 title: title, planID: currentParent == nil ? selectedPlan : currentParent?.planId,
                 stageID: currentParent?.stageId, parentID: parentID,
                 notes: notes.isEmpty ? nil : notes,
-                scheduledDate: hasDate ? DateOnly(from: date, in: env.store.currentTimeZone) : nil,
+                startAt: startDraft.point(in: env.store.currentTimeZone),
+                endAt: endDraft.point(in: env.store.currentTimeZone),
                 priority: priority, source: .manual))
             env.lastBatchNotice = env.store.lastNotification
             router.dismissSheet()

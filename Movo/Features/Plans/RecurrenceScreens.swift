@@ -24,8 +24,14 @@ public struct RecurrenceEditorScreen: View {
     @State private var weekdays: Set<Int> = [1, 3, 5]
     @State private var weeklyCount = 3
     @State private var effectiveFrom: DateOnly?
+    @State private var dailyStartOn = false
+    @State private var dailyStart = Date()
+    @State private var dailyEndOn = false
+    @State private var dailyEnd = Date()
     @State private var existingOccurrences: [RecurrenceOccurrence] = []
     @State private var isSaving = false
+    @State private var conversion: SubtaskConversionPreview?
+    @State private var confirmConversion = false
 
     public init(taskID: UUID) { self.taskID = taskID }
 
@@ -67,6 +73,10 @@ public struct RecurrenceEditorScreen: View {
                                message: "设置后这条任务会变成模板，每一次完成或跳过都只影响当次。")
                 }
 
+                if rule == nil, let conversion, conversion.hasSubtasks {
+                    conversionSection(conversion)
+                }
+
                 MovoFormSection("频率") {
                     MovoFormRow("重复方式") {
                         MovoRequiredChipRow(options: RecurrencePattern.allCases,
@@ -90,6 +100,28 @@ public struct RecurrenceEditorScreen: View {
                     }
                 }
 
+                MovoFormSection("每天的时刻",
+                                footnote: "可选。不填表示全天；设置开始时刻后会按这个时刻提醒。") {
+                    Toggle(isOn: $dailyStartOn) {
+                        Text("开始时刻").font(MovoFont.bodyEmphasis).foregroundStyle(MovoColor.ink)
+                    }
+                    .toggleStyle(.switch)
+                    if dailyStartOn {
+                        DatePicker("", selection: $dailyStart, displayedComponents: [.hourAndMinute])
+                            .labelsHidden()
+                            .environment(\.timeZone, env.store.currentTimeZone)
+                    }
+                    Toggle(isOn: $dailyEndOn) {
+                        Text("结束时刻").font(MovoFont.bodyEmphasis).foregroundStyle(MovoColor.ink)
+                    }
+                    .toggleStyle(.switch)
+                    if dailyEndOn {
+                        DatePicker("", selection: $dailyEnd, displayedComponents: [.hourAndMinute])
+                            .labelsHidden()
+                            .environment(\.timeZone, env.store.currentTimeZone)
+                    }
+                }
+
                 MovoFormSection("生效时间",
                                 footnote: "生效日期早于今天时会自动修正为今天，并记入历史。") {
                     MovoDateField("从哪一天开始生效", placeholder: "今天",
@@ -110,12 +142,65 @@ public struct RecurrenceEditorScreen: View {
             }
 
             MovoActionBar {
-                MovoButton(rule == nil ? "设置重复" : "保存修改", kind: .primary,
-                           isEnabled: !isSaving, isLoading: isSaving) {
-                    _Concurrency.Task { await save() }
+                MovoButton(saveTitle, kind: .primary,
+                           isEnabled: !isSaving && conversion?.blockers.isEmpty != false,
+                           isLoading: isSaving) {
+                    if needsConversion {
+                        confirmConversion = true
+                    } else {
+                        _Concurrency.Task { await save() }
+                    }
                 }
                 MovoButton("取消", kind: .quiet) { router.pop() }
                 Spacer(minLength: 0)
+            }
+        }
+        .confirmationDialog("把子任务转成步骤？", isPresented: $confirmConversion, titleVisibility: .visible) {
+            Button("转为步骤并设置重复") { _Concurrency.Task { await save() } }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text(conversionSummary)
+        }
+    }
+
+    private var needsConversion: Bool {
+        rule == nil && conversion?.hasSubtasks == true
+    }
+
+    private var saveTitle: String {
+        if rule != nil { return "保存修改" }
+        return needsConversion ? "转为步骤并设置重复" : "设置重复"
+    }
+
+    private var conversionSummary: String {
+        guard let conversion else { return "" }
+        var parts = ["\(conversion.convertIDs.count) 个子任务会转成步骤"]
+        if conversion.droppedFieldCount > 0 { parts.append("它们的时间和前置关系会丢弃") }
+        if !conversion.discardIDs.isEmpty { parts.append("\(conversion.discardIDs.count) 个已结束的子任务会移到最近删除") }
+        if !conversion.unlinkedDependentIDs.isEmpty { parts.append("\(conversion.unlinkedDependentIDs.count) 项待办的前置关系会解除") }
+        return parts.joined(separator: "；") + "。可以撤销。"
+    }
+
+    private func conversionSection(_ conversion: SubtaskConversionPreview) -> some View {
+        MovoFormSection("子任务将转成步骤",
+                        footnote: "重复行动下只能挂步骤：每次执行展开为一份清单，逐项勾选。转换和设置重复一起提交，可以一次撤销。") {
+            ForEach(conversion.blockers, id: \.self) { blocker in
+                MovoBanner(kind: .warning, title: "需要先处理", message: blocker)
+            }
+            MovoInfoRow("转成步骤", value: "\(conversion.convertIDs.count) 个", systemImage: "list.bullet.indent")
+            if conversion.droppedFieldCount > 0 {
+                MovoInfoRow("丢弃时间和前置", value: "\(conversion.droppedFieldCount) 个子任务",
+                            systemImage: "calendar.badge.minus")
+            }
+            if !conversion.discardIDs.isEmpty {
+                MovoInfoRow("移到最近删除",
+                            value: "\(conversion.discardIDs.count) 个已结束的子任务（\(conversion.discardTitles.joined(separator: "、"))）",
+                            systemImage: "trash")
+            }
+            if !conversion.unlinkedDependentIDs.isEmpty {
+                MovoInfoRow("解除前置关系",
+                            value: conversion.unlinkedDependentTitles.joined(separator: "、"),
+                            systemImage: "arrow.triangle.branch")
             }
         }
     }
@@ -124,7 +209,24 @@ public struct RecurrenceEditorScreen: View {
         RecurrenceDraft(pattern: pattern,
                         weekdays: pattern == .weekdays ? weekdays.sorted() : [],
                         weeklyCount: pattern == .weeklyCount ? weeklyCount : nil,
-                        effectiveFrom: effectiveFrom ?? env.store.today)
+                        effectiveFrom: effectiveFrom ?? env.store.today,
+                        dailyStart: dailyStartOn ? timeOfDay(from: dailyStart) : nil,
+                        dailyEnd: dailyEndOn ? timeOfDay(from: dailyEnd) : nil)
+    }
+
+    private func timeOfDay(from date: Date) -> TimeOfDay {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = env.store.currentTimeZone
+        let parts = cal.dateComponents([.hour, .minute], from: date)
+        return TimeOfDay(hour: parts.hour ?? 0, minute: parts.minute ?? 0)
+    }
+
+    private func pickerDate(for time: TimeOfDay) -> Date {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = env.store.currentTimeZone
+        var comps = cal.dateComponents([.year, .month, .day], from: env.store.now)
+        comps.hour = time.hour; comps.minute = time.minute; comps.second = 0
+        return cal.date(from: comps) ?? env.store.now
     }
 
     private func impactPreview(for rule: RecurrenceRule) -> ImpactPreview {
@@ -152,13 +254,28 @@ public struct RecurrenceEditorScreen: View {
                     ruleID: rule.id, pattern: pattern,
                     weekdays: pattern == .weekdays ? weekdays.sorted() : [],
                     weeklyCount: pattern == .weeklyCount ? weeklyCount : nil,
-                    effectiveFrom: from, baseRevision: rule.revision))
+                    effectiveFrom: from,
+                    updatesDailyTimes: true, dailyStart: draft.dailyStart, dailyEnd: draft.dailyEnd,
+                    baseRevision: rule.revision))
+            } else if needsConversion {
+                _ = try await env.store.executeBatch(BatchInput(
+                    commands: [
+                        ConvertSubtasksToSteps(taskID: taskID),
+                        CreateRecurrence(
+                            taskID: taskID, pattern: pattern,
+                            weekdays: pattern == .weekdays ? weekdays.sorted() : [],
+                            weeklyCount: pattern == .weeklyCount ? weeklyCount : nil,
+                            effectiveFrom: from,
+                            dailyStart: draft.dailyStart, dailyEnd: draft.dailyEnd)
+                    ],
+                    summary: "子任务转为步骤并设置重复"))
             } else {
                 try await env.store.execute(CreateRecurrence(
                     taskID: taskID, pattern: pattern,
                     weekdays: pattern == .weekdays ? weekdays.sorted() : [],
                     weeklyCount: pattern == .weeklyCount ? weeklyCount : nil,
-                    effectiveFrom: from))
+                    effectiveFrom: from,
+                    dailyStart: draft.dailyStart, dailyEnd: draft.dailyEnd))
             }
             env.pendingRecurrence = nil
             env.lastBatchNotice = env.store.lastNotification
@@ -173,11 +290,22 @@ public struct RecurrenceEditorScreen: View {
     private func load() async {
         task = await env.store.repository.task(taskID)
         rule = await env.store.repository.rule(forTask: taskID)
+        if rule == nil, task?.isTemplate != true {
+            conversion = await ConvertSubtasksToSteps.analyze(taskID: taskID, repository: env.store.repository)
+        }
         if let rule {
             pattern = rule.pattern
             weekdays = Set(rule.weekdays ?? [])
             weeklyCount = rule.weeklyCount ?? 3
             effectiveFrom = rule.effectiveFrom
+            if let start = rule.dailyStart {
+                dailyStartOn = true
+                dailyStart = pickerDate(for: start)
+            }
+            if let end = rule.dailyEnd {
+                dailyEndOn = true
+                dailyEnd = pickerDate(for: end)
+            }
             existingOccurrences = await env.store.repository.occurrences(ruleID: rule.id)
         }
     }
@@ -319,6 +447,11 @@ public struct RecurrencePreviewScreen: View {
                         }
                         MovoInfoRow("生效日期", value: newRule.effectiveFrom.displayString,
                                     systemImage: "flag")
+                        if newRule.dailyStart != nil || newRule.dailyEnd != nil {
+                            let start = newRule.dailyStart?.displayString ?? "—"
+                            let end = newRule.dailyEnd?.displayString ?? "—"
+                            MovoInfoRow("每天时刻", value: "\(start) – \(end)", systemImage: "clock")
+                        }
                     }
                 }
             }
@@ -345,13 +478,16 @@ public struct RecurrencePreviewScreen: View {
                     ruleID: rule.id, pattern: draft.pattern,
                     weekdays: draft.pattern == .weekdays ? draft.weekdays : [],
                     weeklyCount: draft.pattern == .weeklyCount ? draft.weeklyCount : nil,
-                    effectiveFrom: draft.effectiveFrom, baseRevision: rule.revision))
+                    effectiveFrom: draft.effectiveFrom,
+                    updatesDailyTimes: true, dailyStart: draft.dailyStart, dailyEnd: draft.dailyEnd,
+                    baseRevision: rule.revision))
             } else {
                 try await env.store.execute(CreateRecurrence(
                     taskID: taskID, pattern: draft.pattern,
                     weekdays: draft.pattern == .weekdays ? draft.weekdays : [],
                     weeklyCount: draft.pattern == .weeklyCount ? draft.weeklyCount : nil,
-                    effectiveFrom: draft.effectiveFrom))
+                    effectiveFrom: draft.effectiveFrom,
+                    dailyStart: draft.dailyStart, dailyEnd: draft.dailyEnd))
             }
             env.pendingRecurrence = nil
             env.lastBatchNotice = env.store.lastNotification

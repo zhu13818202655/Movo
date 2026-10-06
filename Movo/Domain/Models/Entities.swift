@@ -15,7 +15,9 @@ public struct Plan: Identifiable, Hashable, Sendable, Codable {
     public var kind: PlanKind
     public var category: PlanCategory?
     public var goalText: String?
-    public var targetDate: DateOnly?
+    /// 起止时间均可选：两者都空表示还没想好，之后再补
+    public var startAt: TimePoint?
+    public var endAt: TimePoint?
     public var aliases: [String]
     public var contextPhrases: [String]
     public var excludedTerms: [String]
@@ -31,13 +33,51 @@ public struct Plan: Identifiable, Hashable, Sendable, Codable {
     public var updatedAt: Date
     public var revision: Int
 
+    private enum CodingKeys: String, CodingKey {
+        case id, name, kind, category, goalText, startAt, endAt, aliases, contextPhrases, excludedTerms
+        case cloudAIEnabled, syncEnabled, status, pausedAt, resumedAt, sortIndex
+        case createdAt, updatedAt, revision
+    }
+
+    /// 旧版字段：只读，用于升级前保存的数据
+    private enum LegacyKeys: String, CodingKey { case targetDate }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        kind = try c.decode(PlanKind.self, forKey: .kind)
+        category = try c.decodeIfPresent(PlanCategory.self, forKey: .category)
+        goalText = try c.decodeIfPresent(String.self, forKey: .goalText)
+        startAt = try c.decodeIfPresent(TimePoint.self, forKey: .startAt)
+        var end = try c.decodeIfPresent(TimePoint.self, forKey: .endAt)
+        if end == nil {
+            let legacy = try decoder.container(keyedBy: LegacyKeys.self)
+            if let day = try legacy.decodeIfPresent(DateOnly.self, forKey: .targetDate) { end = .day(day) }
+        }
+        endAt = end
+        aliases = try c.decode([String].self, forKey: .aliases)
+        contextPhrases = try c.decode([String].self, forKey: .contextPhrases)
+        excludedTerms = try c.decode([String].self, forKey: .excludedTerms)
+        cloudAIEnabled = try c.decode(Bool.self, forKey: .cloudAIEnabled)
+        syncEnabled = try c.decode(Bool.self, forKey: .syncEnabled)
+        status = try c.decode(PlanStatus.self, forKey: .status)
+        pausedAt = try c.decodeIfPresent(DateOnly.self, forKey: .pausedAt)
+        resumedAt = try c.decodeIfPresent(DateOnly.self, forKey: .resumedAt)
+        sortIndex = try c.decode(Int.self, forKey: .sortIndex)
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
+        updatedAt = try c.decode(Date.self, forKey: .updatedAt)
+        revision = try c.decode(Int.self, forKey: .revision)
+    }
+
     public init(
         id: UUID = UUID(),
         name: String,
         kind: PlanKind,
         category: PlanCategory? = nil,
         goalText: String? = nil,
-        targetDate: DateOnly? = nil,
+        startAt: TimePoint? = nil,
+        endAt: TimePoint? = nil,
         aliases: [String] = [],
         contextPhrases: [String] = [],
         excludedTerms: [String] = [],
@@ -56,7 +96,8 @@ public struct Plan: Identifiable, Hashable, Sendable, Codable {
         self.kind = kind
         self.category = category
         self.goalText = goalText
-        self.targetDate = targetDate
+        self.startAt = startAt
+        self.endAt = endAt
         self.aliases = aliases
         self.contextPhrases = contextPhrases
         self.excludedTerms = excludedTerms
@@ -101,7 +142,8 @@ public struct Stage: Identifiable, Hashable, Sendable, Codable {
     public var name: String
     /// 可选达成条件（用户设定或手动确认，AI 不得猜测，REQ 08）
     public var criteriaText: String?
-    public var targetDate: DateOnly?
+    public var startAt: TimePoint?
+    public var endAt: TimePoint?
     public var status: StageStatus
     public var achievedAt: Date?
     /// 阶段结构修改保留版本
@@ -110,11 +152,41 @@ public struct Stage: Identifiable, Hashable, Sendable, Codable {
     public var createdAt: Date
     public var revision: Int
 
+    private enum CodingKeys: String, CodingKey {
+        case id, planId, name, criteriaText, startAt, endAt, status, achievedAt
+        case version, sortIndex, createdAt, revision
+    }
+
+    /// 旧版字段：只读，用于升级前保存的数据
+    private enum LegacyKeys: String, CodingKey { case targetDate }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        planId = try c.decode(UUID.self, forKey: .planId)
+        name = try c.decode(String.self, forKey: .name)
+        criteriaText = try c.decodeIfPresent(String.self, forKey: .criteriaText)
+        startAt = try c.decodeIfPresent(TimePoint.self, forKey: .startAt)
+        var end = try c.decodeIfPresent(TimePoint.self, forKey: .endAt)
+        if end == nil {
+            let legacy = try decoder.container(keyedBy: LegacyKeys.self)
+            if let day = try legacy.decodeIfPresent(DateOnly.self, forKey: .targetDate) { end = .day(day) }
+        }
+        endAt = end
+        status = try c.decode(StageStatus.self, forKey: .status)
+        achievedAt = try c.decodeIfPresent(Date.self, forKey: .achievedAt)
+        version = try c.decode(Int.self, forKey: .version)
+        sortIndex = try c.decode(Int.self, forKey: .sortIndex)
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
+        revision = try c.decode(Int.self, forKey: .revision)
+    }
+
     public init(id: UUID = UUID(), planId: UUID, name: String, criteriaText: String? = nil,
-                targetDate: DateOnly? = nil, status: StageStatus = .notStarted, achievedAt: Date? = nil,
+                startAt: TimePoint? = nil, endAt: TimePoint? = nil,
+                status: StageStatus = .notStarted, achievedAt: Date? = nil,
                 version: Int = 1, sortIndex: Int = 0, createdAt: Date = Date(), revision: Int = 1) {
         self.id = id; self.planId = planId; self.name = name; self.criteriaText = criteriaText
-        self.targetDate = targetDate; self.status = status; self.achievedAt = achievedAt
+        self.startAt = startAt; self.endAt = endAt; self.status = status; self.achievedAt = achievedAt
         self.version = version; self.sortIndex = sortIndex; self.createdAt = createdAt; self.revision = revision
     }
 
@@ -172,12 +244,9 @@ public struct Task: Identifiable, Hashable, Sendable, Codable {
     /// true = 重复行动模板，必须挂 RecurrenceRule（C4）
     public var isTemplate: Bool
     public var status: TaskStatus
-    /// 安排日期（独立于硬截止，AC02）
-    public var scheduledDate: DateOnly?
-    /// 硬截止（含时区）
-    public var hardDeadline: DateTimeTZ?
-    /// 如 morning/night/具体时刻，仅展示，不产生通知
-    public var timeHint: TimeOfDayHint?
+    /// 起止时间均可选：两者都空表示暂存的想法；只有开始是「从何时开始」，只有结束是「截止」
+    public var startAt: TimePoint?
+    public var endAt: TimePoint?
     public var estimateMinutes: Int?
     public var priority: TaskPriority?
     public var tags: [String]
@@ -193,10 +262,63 @@ public struct Task: Identifiable, Hashable, Sendable, Codable {
     public var updatedAt: Date
     public var revision: Int
 
+    private enum CodingKeys: String, CodingKey {
+        case id, planId, stageId, parentId, title, notes, isTemplate, status, startAt, endAt
+        case estimateMinutes, priority, tags, dependencyIDs, source, sourceCaptureId
+        case suggestedFields, doneAt, cancelledAt, createdAt, updatedAt, revision
+    }
+
+    /// 旧版字段：只读，用于升级前保存的数据
+    private enum LegacyKeys: String, CodingKey { case scheduledDate, hardDeadline, timeHint }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        planId = try c.decodeIfPresent(UUID.self, forKey: .planId)
+        stageId = try c.decodeIfPresent(UUID.self, forKey: .stageId)
+        parentId = try c.decodeIfPresent(UUID.self, forKey: .parentId)
+        title = try c.decode(String.self, forKey: .title)
+        notes = try c.decodeIfPresent(String.self, forKey: .notes)
+        isTemplate = try c.decode(Bool.self, forKey: .isTemplate)
+        status = try c.decode(TaskStatus.self, forKey: .status)
+        var start = try c.decodeIfPresent(TimePoint.self, forKey: .startAt)
+        var end = try c.decodeIfPresent(TimePoint.self, forKey: .endAt)
+        if start == nil || end == nil {
+            let legacy = try decoder.container(keyedBy: LegacyKeys.self)
+            if start == nil, let day = try legacy.decodeIfPresent(DateOnly.self, forKey: .scheduledDate) {
+                start = .day(day)
+                // 只有精确时刻才能迁移：「早上/晚上」等模糊时段丢弃，不虚构时刻
+                if let hint = try legacy.decodeIfPresent(TimeOfDayHint.self, forKey: .timeHint),
+                   case .exact(let hour, let minute) = hint,
+                   let point = TimePoint.makeInstant(on: day, at: TimeOfDay(hour: hour, minute: minute),
+                                                     in: day.timeZone) {
+                    start = point
+                }
+            }
+            if end == nil, let deadline = try legacy.decodeIfPresent(DateTimeTZ.self, forKey: .hardDeadline) {
+                end = .instant(deadline)
+            }
+        }
+        startAt = start
+        endAt = end
+        estimateMinutes = try c.decodeIfPresent(Int.self, forKey: .estimateMinutes)
+        priority = try c.decodeIfPresent(TaskPriority.self, forKey: .priority)
+        tags = try c.decode([String].self, forKey: .tags)
+        dependencyIDs = try c.decode([UUID].self, forKey: .dependencyIDs)
+        source = try c.decode(SourceKind.self, forKey: .source)
+        sourceCaptureId = try c.decodeIfPresent(UUID.self, forKey: .sourceCaptureId)
+        suggestedFields = try c.decode([String].self, forKey: .suggestedFields)
+        doneAt = try c.decodeIfPresent(Date.self, forKey: .doneAt)
+        cancelledAt = try c.decodeIfPresent(Date.self, forKey: .cancelledAt)
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
+        updatedAt = try c.decode(Date.self, forKey: .updatedAt)
+        revision = try c.decode(Int.self, forKey: .revision)
+    }
+
     public init(
         id: UUID = UUID(), planId: UUID? = nil, stageId: UUID? = nil, parentId: UUID? = nil,
         title: String, notes: String? = nil, isTemplate: Bool = false, status: TaskStatus = .todo,
-        scheduledDate: DateOnly? = nil, hardDeadline: DateTimeTZ? = nil, timeHint: TimeOfDayHint? = nil,
+        startAt: TimePoint? = nil, endAt: TimePoint? = nil,
         estimateMinutes: Int? = nil, priority: TaskPriority? = nil, tags: [String] = [],
         dependencyIDs: [UUID] = [], source: SourceKind = .manual, sourceCaptureId: UUID? = nil,
         suggestedFields: [String] = [], doneAt: Date? = nil, cancelledAt: Date? = nil,
@@ -204,7 +326,7 @@ public struct Task: Identifiable, Hashable, Sendable, Codable {
     ) {
         self.id = id; self.planId = planId; self.stageId = stageId; self.parentId = parentId
         self.title = title; self.notes = notes; self.isTemplate = isTemplate; self.status = status
-        self.scheduledDate = scheduledDate; self.hardDeadline = hardDeadline; self.timeHint = timeHint
+        self.startAt = startAt; self.endAt = endAt
         self.estimateMinutes = estimateMinutes; self.priority = priority; self.tags = tags
         self.dependencyIDs = dependencyIDs; self.source = source; self.sourceCaptureId = sourceCaptureId
         self.suggestedFields = suggestedFields; self.doneAt = doneAt; self.cancelledAt = cancelledAt
@@ -217,13 +339,24 @@ public struct Task: Identifiable, Hashable, Sendable, Codable {
     /// 进度分母：叶子任务、未取消、非模板（4.4 progressFor .delivery）
     public var countsTowardProgress: Bool { !isTemplate && status.countsTowardProgress }
 
+    /// 重复行动的步骤：模板下的任务（`isTemplate` 且有父节点），每次执行展开为一份清单，不进入待办列表
+    public var isStep: Bool { isTemplate && parentId != nil }
+
     public func isSuggested(_ field: String) -> Bool { suggestedFields.contains(field) }
 
-    /// AC02：界面必须能看出"哪天做"与"最晚完成时间"的差异
-    public var scheduleVsDeadlineSummary: String {
-        let s = scheduledDate.map { "安排 \($0.displayString)" } ?? "未安排日期"
-        let d = hardDeadline.map { "截止 \($0.displayString)" } ?? "未设置硬截止"
-        return "\(s) · \(d)"
+    /// 开始所在日期（列表筛选、「今日」使用）
+    public var startDay: DateOnly? { startAt?.dateOnly }
+    /// 结束所在日期
+    public var endDay: DateOnly? { endAt?.dateOnly }
+
+    /// 界面用的起止摘要：未设置的一端不显示
+    public var timeRangeSummary: String {
+        switch (startAt, endAt) {
+        case (nil, nil): return "未安排时间"
+        case (let s?, nil): return "开始 \(s.displayString)"
+        case (nil, let e?): return "截止 \(e.displayString)"
+        case (let s?, let e?): return "\(s.displayString) → \(e.displayString)"
+        }
     }
 }
 
@@ -239,6 +372,9 @@ public struct RecurrenceRule: Identifiable, Hashable, Sendable, Codable {
     public var weeklyCount: Int?
     public var effectiveFrom: DateOnly
     public var effectiveUntil: DateOnly?
+    /// 每次实例的开始/结束时刻（可选，空表示全天），按实例所在日的时区解释
+    public var dailyStart: TimeOfDay?
+    public var dailyEnd: TimeOfDay?
     /// 规则修改 +1；仅作用于 effectiveFrom 及以后（AC22）
     public var version: Int
     /// 暂停期间不实例化、不补造
@@ -249,11 +385,13 @@ public struct RecurrenceRule: Identifiable, Hashable, Sendable, Codable {
     public init(id: UUID = UUID(), taskId: UUID, pattern: RecurrencePattern,
                 weekdays: [Int]? = nil, weeklyCount: Int? = nil,
                 effectiveFrom: DateOnly, effectiveUntil: DateOnly? = nil,
+                dailyStart: TimeOfDay? = nil, dailyEnd: TimeOfDay? = nil,
                 version: Int = 1, status: RuleStatus = .active,
                 createdAt: Date = Date(), revision: Int = 1) {
         self.id = id; self.taskId = taskId; self.pattern = pattern
         self.weekdays = weekdays; self.weeklyCount = weeklyCount
         self.effectiveFrom = effectiveFrom; self.effectiveUntil = effectiveUntil
+        self.dailyStart = dailyStart; self.dailyEnd = dailyEnd
         self.version = version; self.status = status
         self.createdAt = createdAt; self.revision = revision
     }
@@ -287,6 +425,29 @@ public struct RecurrenceRule: Identifiable, Hashable, Sendable, Codable {
         }
     }
 
+    /// 每天时刻的展示，如「08:00–09:00」；未设置返回 nil
+    public var dailyTimeDescription: String? {
+        switch (dailyStart, dailyEnd) {
+        case (nil, nil): return nil
+        case (let s?, nil): return "\(s.displayString) 开始"
+        case (nil, let e?): return "\(e.displayString) 前"
+        case (let s?, let e?): return "\(s.displayString)–\(e.displayString)"
+        }
+    }
+
+    /// 某天实例的开始：规则带时刻时为「该日 + 时刻」，否则是这一天
+    public func occurrenceStart(on day: DateOnly) -> TimePoint {
+        guard let time = dailyStart,
+              let point = TimePoint.makeInstant(on: day, at: time, in: day.timeZone) else { return .day(day) }
+        return point
+    }
+
+    /// 某天实例的结束：只有规则带结束时刻时才有
+    public func occurrenceEnd(on day: DateOnly) -> TimePoint? {
+        guard let time = dailyEnd else { return nil }
+        return TimePoint.makeInstant(on: day, at: time, in: day.timeZone)
+    }
+
     /// 8.6 / V8 字段完备性
     public var isFieldComplete: Bool {
         switch pattern {
@@ -298,6 +459,21 @@ public struct RecurrenceRule: Identifiable, Hashable, Sendable, Codable {
 }
 
 // MARK: - RecurrenceOccurrence
+
+/// 某一次执行里的步骤。第一次勾选或这一次被完成/跳过时从模板的步骤拍一份快照，
+/// 之后修改模板步骤不再影响已发生的这一次。
+public struct OccurrenceStep: Hashable, Sendable, Codable, Identifiable {
+    /// 模板下步骤任务的 id
+    public var id: UUID
+    /// 上一级步骤的 id；顶层步骤为 nil
+    public var parentId: UUID?
+    public var title: String
+    public var isDone: Bool
+
+    public init(id: UUID, parentId: UUID? = nil, title: String, isDone: Bool = false) {
+        self.id = id; self.parentId = parentId; self.title = title; self.isDone = isDone
+    }
+}
 
 public struct RecurrenceOccurrence: Identifiable, Hashable, Sendable, Codable {
     public var id: UUID
@@ -312,13 +488,16 @@ public struct RecurrenceOccurrence: Identifiable, Hashable, Sendable, Codable {
     public var status: OccurrenceStatus
     public var doneAt: Date?
     public var revision: Int
+    /// 这一次的步骤清单（带勾选状态）。nil = 还没有开始勾选，展示模板当前的步骤
+    public var steps: [OccurrenceStep]?
 
     public init(id: UUID = UUID(), ruleId: UUID, ruleVersion: Int = 1, taskId: UUID,
                 planId: UUID? = nil, scheduledOn: DateOnly? = nil, occurredOn: DateOnly? = nil,
-                status: OccurrenceStatus = .pending, doneAt: Date? = nil, revision: Int = 1) {
+                status: OccurrenceStatus = .pending, doneAt: Date? = nil, revision: Int = 1,
+                steps: [OccurrenceStep]? = nil) {
         self.id = id; self.ruleId = ruleId; self.ruleVersion = ruleVersion; self.taskId = taskId
         self.planId = planId; self.scheduledOn = scheduledOn; self.occurredOn = occurredOn
-        self.status = status; self.doneAt = doneAt; self.revision = revision
+        self.status = status; self.doneAt = doneAt; self.revision = revision; self.steps = steps
     }
 
     /// 唯一键 (ruleId, ruleVersion, scheduledOn)，幂等 upsert
@@ -459,6 +638,8 @@ public struct Capture: Identifiable, Hashable, Sendable, Codable {
     public var state: CaptureState
     public var batchId: UUID?
     public var segments: [SourceSpan]
+    /// 持久化保存的提案 JSON（供离线/重启后恢复预览）
+    public var proposalJSON: String?
     /// 原始音频默认不留存；仅转写失败且用户选择保留时 ≤24h
     public var audioRetention: AudioRetention
     public var audioExpiresAt: Date?
@@ -467,10 +648,12 @@ public struct Capture: Identifiable, Hashable, Sendable, Codable {
     public init(id: UUID = UUID(), rawText: String, editedText: String? = nil,
                 inputMode: InputMode = .text, capturedAt: Date = Date(), timezoneID: String,
                 state: CaptureState = .saved, batchId: UUID? = nil, segments: [SourceSpan] = [],
+                proposalJSON: String? = nil,
                 audioRetention: AudioRetention = .none, audioExpiresAt: Date? = nil, revision: Int = 1) {
         self.id = id; self.rawText = rawText; self.editedText = editedText
         self.inputMode = inputMode; self.capturedAt = capturedAt; self.timezoneID = timezoneID
         self.state = state; self.batchId = batchId; self.segments = segments
+        self.proposalJSON = proposalJSON
         self.audioRetention = audioRetention; self.audioExpiresAt = audioExpiresAt; self.revision = revision
     }
 

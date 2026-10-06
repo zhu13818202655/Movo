@@ -52,6 +52,13 @@ public enum RecurrencePolicy {
             status: .pending)
     }
 
+    /// 实例的起止：由实例日期加规则每天的时刻生成（固定日期模式才有）
+    public static func timeRange(of occurrence: RecurrenceOccurrence,
+                                 rule: RecurrenceRule) -> (start: TimePoint, end: TimePoint?)? {
+        guard let day = occurrence.scheduledOn else { return nil }
+        return (rule.occurrenceStart(on: day), rule.occurrenceEnd(on: day))
+    }
+
     /// 对已有实例集合做合并，返回需要写库的实例（新增或版本迁移）
     public static func reconcile(existing: [RecurrenceOccurrence],
                                  wanted: [RecurrenceOccurrence]) -> [RecurrenceOccurrence] {
@@ -124,7 +131,10 @@ public enum RecurrencePolicy {
                                    weekdays: [Int]?,
                                    weeklyCount: Int?,
                                    effectiveFrom: DateOnly,
-                                   today: DateOnly) throws -> RecurrenceRule {
+                                   today: DateOnly,
+                                   updatesDailyTimes: Bool = false,
+                                   dailyStart: TimeOfDay? = nil,
+                                   dailyEnd: TimeOfDay? = nil) throws -> RecurrenceRule {
         // V7：effectiveFrom < 今天 → 置为今天（静默修正并记录）
         let from = max(effectiveFrom, today)
         var updated = rule
@@ -132,6 +142,10 @@ public enum RecurrencePolicy {
         updated.weekdays = weekdays
         updated.weeklyCount = weeklyCount
         updated.effectiveFrom = from
+        if updatesDailyTimes {
+            updated.dailyStart = dailyStart
+            updated.dailyEnd = dailyEnd
+        }
         updated.version = rule.version + 1
         updated.revision = rule.revision + 1
         updated.status = .active

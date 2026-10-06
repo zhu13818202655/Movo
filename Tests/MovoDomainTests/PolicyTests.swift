@@ -172,4 +172,55 @@ final class PolicyTests: XCTestCase {
         XCTAssertTrue(tokens.contains("牛奶"))
         XCTAssertFalse(tokens.contains("散步，牛奶"))
     }
+
+    // MARK: - 起止时间与跨时区（time.md）
+
+    func testTimePointComparisonAcrossTimeZones() {
+        let tokyoTZ = "Asia/Tokyo"
+        let londonTZ = "Europe/London"
+
+        let epoch: Double = 1_800_000_000
+        let date = Date(timeIntervalSince1970: epoch)
+        let t1 = TimePoint.instant(DateTimeTZ(epoch: date, tzID: tokyoTZ))
+        let t2 = TimePoint.instant(DateTimeTZ(epoch: date, tzID: londonTZ))
+
+        XCTAssertFalse(t1.isEarlier(than: t2))
+        XCTAssertFalse(t1.isLater(than: t2))
+
+        let t3 = TimePoint.instant(DateTimeTZ(epoch: date.addingTimeInterval(1), tzID: londonTZ))
+        XCTAssertTrue(t1.isEarlier(than: t3))
+        XCTAssertTrue(t3.isLater(than: t1))
+    }
+
+    func testTimePointAddingDaysPreservesLocalClock() {
+        let nyTZ = "America/New_York"
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: nyTZ)!
+        var comps = DateComponents()
+        comps.year = 2026; comps.month = 10; comps.day = 10; comps.hour = 14; comps.minute = 30
+        let baseDate = cal.date(from: comps)!
+
+        let p1 = TimePoint.instant(DateTimeTZ(epoch: baseDate, tzID: nyTZ))
+        XCTAssertEqual(p1.clockText, "14:30")
+
+        let p2 = p1.adding(days: 5)
+        XCTAssertEqual(p2.clockText, "14:30", "按自带时区日历平移保持同一钟点")
+        XCTAssertEqual(p2.dateOnly.iso8601DateString, "2026-10-15")
+    }
+
+    func testStructurePolicyWithinValidationAcrossTimeZones() {
+        let shanghaiTZ = "Asia/Shanghai"
+        let parentStart = TimePoint.day(DateOnly(y: 2026, m: 10, d: 1, sourceTZ: shanghaiTZ))
+        let parentEnd = TimePoint.day(DateOnly(y: 2026, m: 10, d: 10, sourceTZ: shanghaiTZ))
+
+        let childInNY = TimePoint.day(DateOnly(y: 2026, m: 10, d: 5, sourceTZ: "America/New_York"))
+        XCTAssertNil(StructurePolicy.withinViolation(
+            startAt: childInNY, endAt: nil, parentStart: parentStart, parentEnd: parentEnd,
+            child: "子任务", parent: "父计划"))
+
+        let childOutOfRange = TimePoint.day(DateOnly(y: 2026, m: 10, d: 12, sourceTZ: "America/New_York"))
+        XCTAssertNotNil(StructurePolicy.withinViolation(
+            startAt: childOutOfRange, endAt: nil, parentStart: parentStart, parentEnd: parentEnd,
+            child: "子任务", parent: "父计划"))
+    }
 }

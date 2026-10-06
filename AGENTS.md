@@ -9,7 +9,7 @@ Movo 是 iOS 26+ / macOS 26+ 的 Swift 6、SwiftUI 应用，使用 SwiftData 本
 - 上手与命令：[README.md](README.md)。
 - 开发与排障：[docs/Development.md](docs/Development.md)。
 - 产品行为：[docs/PRD.md](docs/PRD.md)。
-- 领域与流程设计：[docs/代码实施方案-V2.md](docs/代码实施方案-V2.md)。
+- AI 构建待办流程：[docs/AI-Todo-Pipeline.md](docs/AI-Todo-Pipeline.md)。
 - UI 规范：[docs/UI-Prompt.md](docs/UI-Prompt.md)、[docs/design/Movo.pen](docs/design/Movo.pen)。
 
 按任务读取相关部分，无需每次通读全部资料。历史说明与实现不一致时，构建事实以 `Movo/project.yml`、`Scripts/verify.sh` 和源码为准；产品行为变更应核对 PRD，并在交付中说明发现的差异，不要把规划描述成已实现能力。
@@ -34,20 +34,22 @@ Movo 是 iOS 26+ / macOS 26+ 的 Swift 6、SwiftUI 应用，使用 SwiftData 本
 
 ## 不可混淆的业务语义
 
-- `DateOnly` 表达日期及其来源时区，`DateTimeTZ` 表达时刻与时区；不要用裸 `Date` 替代“某天”。安排日期与硬截止日期分别处理。
+- `DateOnly` 表达日期及其来源时区，`DateTimeTZ` 表达时刻与时区；不要用裸 `Date` 替代“某天”。计划、阶段、任务统一用可选的 `startAt` / `endAt`（`TimePoint`：某一天或某一时刻）；子级时间必须落在父级范围内，由 `StructurePolicy` 校验。
 - 行动记录、任务完成、结果测量是不同操作，不推断记录投入就代表完成或目标达成。
 - 重复模板与当次实例有独立身份；完成当次不改变未来实例，修改频率不重写过去记录。
 - 交付型、改善型和持续型计划遵循各自进度口径；缺失值不填零，分母为零不显示百分比，持续型不强制总进度 100%。
 - 父子归属、子任务层级和依赖合法性通过已有策略校验，不在界面另建一套规则。
 - 一级入口是「待办」，「今日」仅为日期筛选；内部 `.today` 路由与 `/today` 深链为兼容保留。手动创建直接执行 `CreateTask`，AI 整理使用独立入口。
-- 一次性待办支持多级子任务，同一子树保持计划与阶段一致。移动、删除、恢复与撤销必须考虑全部后代及后续编辑；父节点汇总叶子进度，不一次勾选完成整棵树。重复模板暂不参与父子嵌套。
+- 一次性待办支持多级子任务，同一子树保持计划与阶段一致。移动、删除、恢复与撤销必须考虑全部后代及后续编辑；父节点汇总叶子进度，不一次勾选完成整棵树。重复模板不能有普通子任务，只能挂多级步骤（`isTemplate` 且有父节点的 `Task`，`Task.isStep`）；步骤不进入待办、进度和搜索，每次执行的勾选状态记在 `RecurrenceOccurrence.steps`，由 `RecurrenceStepPolicy` 与 `ToggleOccurrenceStep` 维护。带普通子任务的待办设为重复行动，必须先经 `ConvertSubtasksToSteps`（与 `CreateRecurrence` 同批提交，撤销走事件回滚），不能绕过。
 - 修改界面时同步核对 `docs/design/Movo.pen`。有 Pencil MCP 时通过它编辑并截图检查；检查组件实例的文字覆盖值，不能只修改组件源。设计稿需实际保存到文件。
 
 ## 隐私、AI 与数据约束
 
 - API Key 仅通过 `AIKeyStore` 保存在设备专属 Keychain；不得写入源码、配置、SwiftData、CloudKit、日志或导出。测试使用替身和虚构 Key。
-- 保留 `PrivacySplitter`、`ContextBuilder` 与本地路由的隐私边界；未获准的敏感内容不得发送到云 AI。计划的 AI 许可和同步许可互相独立。
-- AI 输出必须经过 `ProposalValidator` 与执行策略；保留原文，失败或歧义走现有收件箱/确认流程。删除、批量变更等操作不能绕过产品要求的预览确认。
+- 隐私只保留全局「AI 开关」；用户输入原文原样发送给模型。开启 AI 开关与首次使用输入时各告知一次。计划级云 AI 开关不再参与判断。
+- AI 的所有写入都先展示预览（计划/阶段/任务树），经用户确认后作为一个原子批次写入，失败整体回滚；支持逐项取消，取消父项级联取消后代。
+- 撤销限制为最近 N 个已应用批次（手动与 AI 统一计数，默认 5 步，`Defaults.json` 配置），撤销沿用冲突保护，不覆盖较新的用户修改。
+- 首次启动为空，不载入演示数据；演示数据仅供测试与预览。
 - 使用 `RedactedLogger` 记录必要元数据，不输出任务正文、输入原文、测量值、音频、Key 或厂商请求/响应正文。
 - 语音保持本机转写与能力检查，不静默回退到云端。
 - CloudKit 默认关闭。不要仅为修复启动或测试而启用云容器；不得同时启用 SwiftData 自动 CloudKit 同步和现有自定义同步。

@@ -5,7 +5,6 @@
 //  D08 / M10 周回顾。事实 / 观察 / 建议三个分区彼此分开：
 //  「事实」只列本周实际发生的记录与测量；「观察」由用户自己写；
 //  「建议」在采纳前不产生任何任务（REQ 17）。数据不足时显示"本周无记录"（AC15）。
-//  敏感计划（cloudAIEnabled=false）只参与本机统计，不进入云 AI。
 //
 
 import SwiftUI
@@ -19,7 +18,6 @@ public struct ReviewScreen: View {
     @State private var weekStart: DateOnly?
     @State private var newNote = ""
     @State private var isSavingNote = false
-    @State private var showCloudBoundary = false
 
     public init() {}
 
@@ -62,13 +60,16 @@ public struct ReviewScreen: View {
                                action: { router.select(.today) })
                     .frame(minHeight: 260)
             } else {
+                MovoDayBarChart(dailyActions: view.dailyActions, totalCount: view.totalActionCount)
+                if !view.categoryDistribution.isEmpty {
+                    MovoCategoryDistributionBar(distribution: view.categoryDistribution, totalCount: view.totalActionCount)
+                }
                 factsSection(view)
             }
 
             gapsSection(view)
             suggestionsSection(view)
             observationSection(view)
-            cloudBoundarySection(view)
 
             if let error = env.lastError {
                 MovoBanner(error: error) { _ in env.lastError = nil }
@@ -98,20 +99,24 @@ public struct ReviewScreen: View {
 
                         if !fact.metricChanges.isEmpty {
                             ForEach(fact.metricChanges) { trend in
-                                HStack(spacing: MovoSpace.s) {
-                                    Text(trend.name).font(MovoFont.captionEmphasis)
-                                        .foregroundStyle(MovoColor.ink)
-                                    if let latest = trend.latest {
-                                        Text("\(PlanEditScreen.numberText(latest))\(trend.unitDisplayName)")
-                                            .font(MovoFont.caption).foregroundStyle(MovoColor.muted)
+                                VStack(alignment: .leading, spacing: MovoSpace.xs) {
+                                    HStack(spacing: MovoSpace.s) {
+                                        Text(trend.name).font(MovoFont.captionEmphasis)
+                                            .foregroundStyle(MovoColor.ink)
+                                        if let latest = trend.latest {
+                                            Text("\(PlanEditScreen.numberText(latest))\(trend.unitDisplayName)")
+                                                .font(MovoFont.caption).foregroundStyle(MovoColor.muted)
+                                        }
+                                        if let deltaText = trend.deltaText {
+                                            MovoTag("较上次 \(deltaText)")
+                                        }
+                                        if trend.correctedCount > 0 {
+                                            MovoTag("\(trend.correctedCount) 次更正", systemImage: "pencil")
+                                        }
+                                        Spacer(minLength: 0)
                                     }
-                                    if let deltaText = trend.deltaText {
-                                        MovoTag("较上次 \(deltaText)")
-                                    }
-                                    if trend.correctedCount > 0 {
-                                        MovoTag("\(trend.correctedCount) 次更正", systemImage: "pencil")
-                                    }
-                                    Spacer(minLength: 0)
+                                    MetricTrendChart(trend)
+                                        .padding(.vertical, MovoSpace.xs)
                                 }
                             }
                         }
@@ -211,7 +216,7 @@ public struct ReviewScreen: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(note.text).font(MovoFont.body).foregroundStyle(MovoColor.ink)
                                 .fixedSize(horizontal: false, vertical: true)
-                            Text(InboxScreen.timeText(note.createdAt))
+                            Text(Self.timeText(note.createdAt))
                                 .font(MovoFont.caption).foregroundStyle(MovoColor.muted)
                         }
                         Spacer(minLength: 0)
@@ -232,34 +237,6 @@ public struct ReviewScreen: View {
                 }
             }
             .padding(MovoSpace.s)
-        }
-    }
-
-    // MARK: - 云 AI 边界
-
-    @ViewBuilder
-    private func cloudBoundarySection(_ view: ReviewView) -> some View {
-        CollapsibleSection("云 AI 的边界", trailing: "与上次一致", isExpanded: $showCloudBoundary) {
-            MovoFormSection("") {
-                if view.cloudAIIncludedPlanNames.isEmpty && view.cloudAIExcludedPlanNames.isEmpty {
-                    Text("这一周没有参与统计的计划。")
-                        .font(MovoFont.body).foregroundStyle(MovoColor.muted)
-                } else {
-                    if !view.cloudAIIncludedPlanNames.isEmpty {
-                        MovoInfoRow("可以进入云 AI",
-                                    value: view.cloudAIIncludedPlanNames.joined(separator: "、"),
-                                    systemImage: "cloud")
-                    }
-                    if !view.cloudAIExcludedPlanNames.isEmpty {
-                        MovoInfoRow("只在本机统计",
-                                    value: view.cloudAIExcludedPlanNames.joined(separator: "、"),
-                                    systemImage: "lock")
-                    }
-                    Text("关闭云端 AI 的计划，其名称、正文与测量值都不会出现在发送给 AI 的内容里。")
-                        .font(MovoFont.caption).foregroundStyle(MovoColor.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
         }
     }
 
@@ -296,6 +273,13 @@ public struct ReviewScreen: View {
 
     private func reload() async {
         view = await env.store.reviewView(weekStart: weekStart)
+    }
+
+    private static func timeText(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh-Hans")
+        f.dateFormat = "M月d日 HH:mm"
+        return f.string(from: date)
     }
 }
 

@@ -84,12 +84,14 @@ public extension DomainStore {
                   task.planId.map({ tombstones.contains($0) || planIndex[$0]?.status == .archived }) != true
             else { continue }
             let planName = occurrence.planId.flatMap { planIndex[$0]?.name }
+            let rule = await repository.rule(occurrence.ruleId)
+            let range = rule.flatMap { RecurrencePolicy.timeRange(of: occurrence, rule: $0) }
             let item = TodayItem(id: "occ-\(occurrence.id.uuidString)",
                                  body: .occurrence(occurrence: occurrence, task: task),
                                  section: occurrence.status == .done ? .completed : .focus,
                                  planName: planName,
                                  dependency: .ready,
-                                 timeHint: task.timeHint,
+                                 startAt: range?.start, endAt: range?.end,
                                  isCompletedToday: occurrence.status == .done)
             guard seen.insert(item.id).inserted else { continue }
             if occurrence.status == .done { completed.append(item) } else { focus.append(item) }
@@ -107,13 +109,15 @@ public extension DomainStore {
             if plan?.status == .archived { continue }
 
             let isDoneToday = task.status == .done && task.doneAt.map { sameDay($0, date) } ?? false
-            let deadlineToday = task.hardDeadline.map { $0.dateOnly <= date } ?? false
+            let startDay = task.startAt?.dateOnly
+            let endDay = task.endAt?.dateOnly
+            let deadlineToday = endDay.map { $0 <= date } ?? false
 
             if isDoneToday {
                 let item = TodayItem(id: "task-\(task.id.uuidString)", body: .scheduled(task: task),
                                      section: .completed, planName: plan?.name,
                                      dependency: await dependencyState(for: task),
-                                     timeHint: task.timeHint, isCompletedToday: true)
+                                     startAt: task.startAt, endAt: task.endAt, isCompletedToday: true)
                 if seen.insert(item.id).inserted { completed.append(item) }
                 continue
             }
@@ -121,30 +125,37 @@ public extension DomainStore {
             guard task.status.isOpen else { continue }
             let state = await dependencyState(for: task)
 
-            // 重点：今天到期的硬截止、today 的 scheduledDate、进行中的任务
+            // 重点：今天到期的结束时间、今天开始或起止范围覆盖今天的任务、进行中的任务
             if deadlineToday {
                 let item = TodayItem(id: "task-\(task.id.uuidString)", body: .deadline(task: task),
                                      section: .focus, planName: plan?.name, dependency: state,
-                                     timeHint: task.timeHint)
+                                     startAt: task.startAt, endAt: task.endAt)
                 if seen.insert(item.id).inserted { focus.append(item) }
-            } else if task.scheduledDate == date {
+            } else if startDay?.isSameDay(as: date) == true {
                 let item = TodayItem(id: "task-\(task.id.uuidString)", body: .scheduled(task: task),
                                      section: .focus, planName: plan?.name, dependency: state,
-                                     timeHint: task.timeHint)
+                                     startAt: task.startAt, endAt: task.endAt)
                 if seen.insert(item.id).inserted { focus.append(item) }
             } else if task.status == .inProgress || task.status == .blocked {
                 let item = TodayItem(id: "task-\(task.id.uuidString)", body: .inProgress(task: task),
                                      section: .focus, planName: plan?.name, dependency: state,
-                                     timeHint: task.timeHint)
+                                     startAt: task.startAt, endAt: task.endAt)
                 if seen.insert(item.id).inserted { focus.append(item) }
-            } else if let s = task.scheduledDate, s < date {
-                // 逾期 → 稍后再做（提供补做/改期/取消）
-                let item = TodayItem(id: "task-\(task.id.uuidString)",
-                                     body: .overdue(task: task, daysLate: s.days(until: date)),
-                                     section: .later, planName: plan?.name, dependency: state,
-                                     timeHint: task.timeHint)
-                if seen.insert(item.id).inserted { later.append(item) }
-
+            } else if let s = startDay, s < date {
+                if endDay != nil {
+                    // 已开始且结束还在后面：起止范围覆盖今天
+                    let item = TodayItem(id: "task-\(task.id.uuidString)", body: .scheduled(task: task),
+                                         section: .focus, planName: plan?.name, dependency: state,
+                                         startAt: task.startAt, endAt: task.endAt)
+                    if seen.insert(item.id).inserted { focus.append(item) }
+                } else {
+                    // 逾期 → 稍后再做（提供补做/改期/取消）
+                    let item = TodayItem(id: "task-\(task.id.uuidString)",
+                                         body: .overdue(task: task, daysLate: s.days(until: date)),
+                                         section: .later, planName: plan?.name, dependency: state,
+                                         startAt: task.startAt, endAt: task.endAt)
+                    if seen.insert(item.id).inserted { later.append(item) }
+                }
             }
         }
 
@@ -157,7 +168,7 @@ public extension DomainStore {
 
     /// 同一个 taskId 在今日、计划树、详情中恒等于同一对象（AC06）
     func sortKey(_ item: TodayItem) -> (Int, Int, String) {
-        let hint = item.timeHint?.sortOrder ?? 500
+        let hint = item.startAt?.secondsOfDayForSorting ?? 86_500
         let priority: Int = {
             switch item.body {
             case .deadline: 0
@@ -210,7 +221,7 @@ public extension DomainStore {
 
             let nextTask = tasks
                 .filter { $0.status.isOpen && !$0.isTemplate }
-                .sorted { ($0.scheduledDate ?? today.adding(days: 999)) < ($1.scheduledDate ?? today.adding(days: 999)) }
+                .sorted { (sortDay(of: $0) ?? today.adding(days: 999)) < (sortDay(of: $1) ?? today.adding(days: 999)) }
                 .first
 
             let activityRank = (tasks.map(\.updatedAt) + [plan.updatedAt]).max() ?? plan.updatedAt
@@ -220,7 +231,7 @@ public extension DomainStore {
                 status: plan.status, progress: progress,
                 currentStageName: currentStage?.name,
                 nextActionText: nextTask.map { nextActionText(for: $0) },
-                targetDateText: plan.targetDate.map { "\($0.m)月\($0.d)日截止" },
+                targetDateText: planTimeText(plan),
                 goalText: plan.goalText,
                 cloudAIEnabled: plan.cloudAIEnabled, syncEnabled: plan.syncEnabled,
                 activityRank: activityRank))
@@ -228,10 +239,25 @@ public extension DomainStore {
         return out.sorted { $0.activityRank > $1.activityRank }
     }
 
+    /// 计划列表里的起止摘要：有结束显示「截止」，只有开始显示「开始」
+    func planTimeText(_ plan: Plan) -> String? {
+        if let end = plan.endAt { return "\(end.displayString)截止" }
+        if let start = plan.startAt { return "\(start.displayString)开始" }
+        return nil
+    }
+
+    /// 任务在列表里的排序日：优先开始日期，其次结束日期
+    func sortDay(of task: Task) -> DateOnly? {
+        task.startAt?.dateOnly ?? task.endAt?.dateOnly
+    }
+
     func nextActionText(for task: Task) -> String {
-        if let d = task.scheduledDate {
-            if d == today { return "\(task.title) · 今天" }
+        if let d = task.startAt?.dateOnly {
+            if d.isSameDay(as: today) { return "\(task.title) · 今天" }
             return "\(task.title) · \(d.displayString)"
+        }
+        if let end = task.endAt {
+            return "\(task.title) · \(end.displayString)截止"
         }
         return "\(task.title) · 待安排"
     }
@@ -266,7 +292,7 @@ public extension DomainStore {
         let occurrences = await repository.occurrences(planID: planID)
         let week = DateOnlyRange.week(containing: today)
 
-        let visible = liveTasks.filter { $0.parentId == nil && $0.status != .cancelled }
+        let visible = liveTasks.filter { $0.parentId == nil && $0.status != .cancelled && !$0.isStep }
         let cancelled = liveTasks.filter { $0.status == .cancelled }
 
         func dependencyStates() -> [UUID: DependencyState] {
@@ -291,7 +317,7 @@ public extension DomainStore {
             var next = visited
             next.insert(task.id)
             let kids = TaskHierarchy.ordered(liveTasks.filter {
-                $0.parentId == task.id && $0.status != .cancelled && !next.contains($0.id)
+                $0.parentId == task.id && $0.status != .cancelled && !$0.isStep && !next.contains($0.id)
             })
             return PlanTreeNode(
                 id: task.id.uuidString, kind: .task(task),
@@ -344,5 +370,9 @@ public extension DomainStore {
         let siblings = await repository.tasks(planID: planID)
         let tombstoned = Set(await repository.tombstones(activeOnly: true).map(\.entityId))
         return DependencyPolicy.blockerTitles(for: task, planTasks: siblings, tombstoned: tombstoned)
+    }
+
+    public func getOrganizeHistory() async -> [OrganizeRecord] {
+        await organizeHistory()
     }
 }

@@ -13,8 +13,6 @@ import Foundation
 /// 一条提议的裁决依据。全部为可判定的本地事实，不含正文。
 public struct ExecutionContext: Sendable, Hashable {
 
-    /// 模型自评置信度（0~1）
-    public var confidence: Double
     /// 是否包含依赖（先后顺序）建议
     public var hasDependencySuggestion: Bool
     /// 本地检索到的候选对象数量（0 = 未命中，1 = 唯一匹配，>1 = 歧义）
@@ -25,30 +23,17 @@ public struct ExecutionContext: Sendable, Hashable {
     public var measurementUnitMissing: Bool
     /// 结果记录单位与指标不一致
     public var measurementUnitMismatched: Bool
-    /// 归属候选的分数差（最高 - 次高）
-    public var classificationMargin: Double?
-    /// 自动归类阈值（与 AppDefaults 同源，可注入）
-    public var autoClassificationConfidence: Double
-    public var autoClassificationMargin: Double
 
-    public init(confidence: Double = 1,
-                hasDependencySuggestion: Bool = false,
+    public init(hasDependencySuggestion: Bool = false,
                 candidateMatchCount: Int = 1,
                 changesHardDeadline: Bool = false,
                 measurementUnitMissing: Bool = false,
-                measurementUnitMismatched: Bool = false,
-                classificationMargin: Double? = nil,
-                autoClassificationConfidence: Double = AppDefaults.fallback.ai.classificationConfidenceThreshold,
-                autoClassificationMargin: Double = AppDefaults.fallback.ai.classificationMarginThreshold) {
-        self.confidence = confidence
+                measurementUnitMismatched: Bool = false) {
         self.hasDependencySuggestion = hasDependencySuggestion
         self.candidateMatchCount = candidateMatchCount
         self.changesHardDeadline = changesHardDeadline
         self.measurementUnitMissing = measurementUnitMissing
         self.measurementUnitMismatched = measurementUnitMismatched
-        self.classificationMargin = classificationMargin
-        self.autoClassificationConfidence = autoClassificationConfidence
-        self.autoClassificationMargin = autoClassificationMargin
     }
 }
 
@@ -107,42 +92,19 @@ public enum ExecutionPolicy {
 
         case .completeTask, .updateTask, .matchOccurrence, .scheduleExistingTask:
             if context.candidateMatchCount == 0 { return .reject }
-            if context.candidateMatchCount > 1 { return .confirm }
-            return .auto
+            return .confirm
 
         case .recordMeasurement:
             if context.candidateMatchCount == 0 { return .reject }
-            return .auto
+            return .confirm
 
         case .logActivity:
             if context.candidateMatchCount == 0 { return .inboxSuggestion }
-            return allowsAutoClassification(context) ? .auto : .inboxSuggestion
+            return .confirm
 
-        case .createTask:
-            // 新待办不要求已有计划；归属不确定由校验器降为独立待办。
-            if context.candidateMatchCount == 0 { return .auto }
-            return allowsAutoClassification(context) ? .auto : .inboxSuggestion
-
-        case .saveNote:
-            return .auto
-
-        case .createPlan, .setDependency, .setRecurrence:
+        case .createTask, .saveNote, .createPlan, .setDependency, .setRecurrence:
             return .confirm
         }
-    }
-
-    /// 6.4 归类：置信度与分差同时达标才允许自动
-    public static func canAutoClassify(confidence: Double, margin: Double?) -> Bool {
-        let thresholds = AppDefaults.fallback.ai
-        guard confidence >= thresholds.classificationConfidenceThreshold else { return false }
-        guard let margin else { return true }
-        return margin >= thresholds.classificationMarginThreshold
-    }
-
-    static func allowsAutoClassification(_ context: ExecutionContext) -> Bool {
-        guard context.confidence >= context.autoClassificationConfidence else { return false }
-        guard let margin = context.classificationMargin else { return true }
-        return margin >= context.autoClassificationMargin
     }
 
     // MARK: 结果文案

@@ -26,11 +26,9 @@ struct MovoApp: App {
 #endif
     }
 
-    /// 首次启动装载统一示例数据（仅演示用；已有内容时不覆盖），
-    /// 然后启动同步（无 iCloud 环境自动降级）并写入通知排期。
+    /// 启动同步（无 iCloud 环境自动降级）并写入通知排期。
     private func bootstrap() async {
         environment.installNotificationHandling()
-        try? await DemoFixtures.seedIfEmpty(into: environment.store)
         await environment.activateSync()
         _ = await environment.refreshNotifications()
     }
@@ -42,7 +40,10 @@ import AppKit
 /// Mac 原生窗口工具栏与菜单
 struct MovoCommands: Commands {
     var body: some Commands {
-        CommandGroup(replacing: .newItem) {}
+        CommandGroup(replacing: .newItem) {
+            Button("导入 Movo 文件…") { NotificationCenter.default.post(name: .movoImportPlan, object: nil) }
+                .keyboardShortcut("o", modifiers: [.command])
+        }
         CommandGroup(after: .appInfo) {
             Button("检查同步状态") { NotificationCenter.default.post(name: .movoRefresh, object: nil) }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
@@ -52,5 +53,6 @@ struct MovoCommands: Commands {
 
 extension Notification.Name {
     static let movoRefresh = Notification.Name("movo.refresh")
+    static let movoImportPlan = Notification.Name("movo.importPlan")
 }
 #endif

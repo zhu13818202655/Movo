@@ -2,7 +2,7 @@
 //  AITransport.swift
 //  Intelligence/Providers
 //
-//  8.6 超时/重试/取消。连接 10s、总 30s；仅网络/429/5xx 自动重试；
+//  8.6 超时/重试/取消。单次等待 60s、总 120s（参数见 Defaults.json）；仅网络/429/5xx 自动重试；
 //  4xx 鉴权与解析失败不自动重试；取消传播到 URLSession。
 //
 
@@ -38,7 +38,7 @@ public struct AITransport: Sendable {
         self.backoffSeconds = backoffSeconds.isEmpty ? [1] : backoffSeconds
     }
 
-    /// 8.6 默认会话：连接超时 10s、资源超时 30s、不等待网络。
+    /// 8.6 默认会话：非流式响应在模型生成完前没有数据，请求超时即「等待模型的最长时间」；不等待网络。
     public static func makeDefaultSession(defaults: AppDefaults) -> URLSession {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = defaults.ai.connectTimeoutSeconds
