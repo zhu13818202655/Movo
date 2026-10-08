@@ -13,7 +13,9 @@ import MovoKit
 
 public struct LogMeasurementScreen: View {
     @Environment(AppEnvironment.self) private var env
-    @Environment(\.movoRouter) private var router
+    /// 关闭本页：`.logMeasurement` 可能被压入导航栈（结果历史里「记录一次」），
+    /// 也可能以浮层呈现（计划详情里「记录一次」），用 dismiss 兼顾两种。
+    @Environment(\.dismiss) private var dismiss
 
     let metricID: UUID
 
@@ -78,7 +80,7 @@ public struct LogMeasurementScreen: View {
                            isEnabled: parsedValue != nil && !isSaving, isLoading: isSaving) {
                     _Concurrency.Task { await save() }
                 }
-                MovoButton("取消", kind: .quiet) { router.pop() }
+                MovoButton("取消", kind: .quiet) { dismiss() }
                 Spacer(minLength: 0)
             }
         }
@@ -110,7 +112,7 @@ public struct LogMeasurementScreen: View {
                 planID: metric.planId, metricID: metric.id, measuredAt: day, value: value,
                 unit: metric.unit, note: note.isEmpty ? nil : note, source: .manual))
             env.lastBatchNotice = env.store.lastNotification
-            router.pop()
+            dismiss()
         } catch let error as MovoError {
             env.lastError = error
         } catch {

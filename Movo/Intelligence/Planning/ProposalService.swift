@@ -2,8 +2,9 @@
 //  ProposalService.swift
 //  Intelligence/Planning
 //
-//  6.2 主流水线：C2 隐私分流 → C3 本地直执 → C4 上下文 → C5 调用 → C6 校验 → C7 策略。
-//  C1 落库与 C8 提交由 App 层经 `DomainCommand` 完成（唯一写入口）。
+//  6.2 主流水线：全局 AI 开关闸门 → C4 上下文 → C5 调用 → C6 校验 → C7 策略。
+//  是否发送只看全局 AI 开关（计划级 cloudAIEnabled 不参与判定）；C1 落库与 C8 提交由 App 层经
+//  `DomainCommand` 完成（唯一写入口）。
 //  任何一步失败：原文已落库，可重试、可手动整理；不得丢失已输入原文（REQ 02）。
 //
 
@@ -30,6 +31,8 @@ public struct ProposalRequest: Sendable {
     public var tasksByPlan: [UUID: [Task]]
     public var occurrencesByTask: [UUID: [RecurrenceOccurrence]]
     public var preferredPlanID: UUID?
+    /// 全局 AI 开关（隐私总闸）：关闭时不得发起任何云调用。
+    public var globalAIEnabled: Bool
 
     public init(captureID: UUID? = nil,
                 rawText: String,
@@ -44,13 +47,16 @@ public struct ProposalRequest: Sendable {
                 stagesByPlan: [UUID: [Stage]] = [:],
                 metricsByPlan: [UUID: [PlanMetric]] = [:],
                 tasksByPlan: [UUID: [Task]] = [:],
-                occurrencesByTask: [UUID: [RecurrenceOccurrence]] = [:], preferredPlanID: UUID? = nil) {
+                occurrencesByTask: [UUID: [RecurrenceOccurrence]] = [:],
+                preferredPlanID: UUID? = nil,
+                globalAIEnabled: Bool = true) {
         self.captureID = captureID; self.rawText = rawText; self.editedText = editedText
         self.inputMode = inputMode; self.today = today; self.timeZone = timeZone
         self.localeIdentifier = localeIdentifier; self.deviceId = deviceId; self.source = source
         self.plans = plans; self.stagesByPlan = stagesByPlan; self.metricsByPlan = metricsByPlan
         self.tasksByPlan = tasksByPlan; self.occurrencesByTask = occurrencesByTask
         self.preferredPlanID = preferredPlanID
+        self.globalAIEnabled = globalAIEnabled
     }
 
     /// 用户编辑过就用编辑后的文本（REQ 02：编辑不影响原文留存）
@@ -168,6 +174,14 @@ public struct ProposalService: Sendable {
             return ProposalPreparation(captureID: request.captureID, skippedCloudCall: true)
         }
 
+        // 隐私总闸：全局 AI 关闭时不触达任何 provider（App 层同时保留一道分支，
+        // 目的是让本机遇到的「已保存提案」仍能回放预览——回放本身不发网络请求）。
+        guard request.globalAIEnabled else {
+            return ProposalPreparation(
+                captureID: request.captureID, skippedCloudCall: true,
+                error: .invalidStructure(reason: "全局 AI 已关闭，原文已保存。可在设置中开启。"))
+        }
+
         // 上下文构建
         var input = AIContextBuilder.build(sendableText: request.effectiveText,
                                            today: request.today,
@@ -251,24 +265,6 @@ public struct ProposalService: Sendable {
                                        error: error)
         } catch {
             return ProposalPreparation(captureID: request.captureID,
-                                       input: input,
-                                       error: .aiFailed(stage: .unknown, cause: "unexpected"))
-        }
-    }
-        } catch let error as MovoError {
-            let elapsedMs = Int(Date().timeIntervalSince(started) * 1000)
-            logger.logAICall(provider: provider.id.rawValue, model: provider.currentModel,
-                             status: error.title, latencyMs: elapsedMs,
-                             promptTokens: 0, completionTokens: 0, itemCount: 0, rejectedCount: 0)
-            return ProposalPreparation(captureID: request.captureID,
-                                       privacy: privacy,
-                                       localMatches: localMatches,
-                                       input: input,
-                                       error: error)
-        } catch {
-            return ProposalPreparation(captureID: request.captureID,
-                                       privacy: privacy,
-                                       localMatches: localMatches,
                                        input: input,
                                        error: .aiFailed(stage: .unknown, cause: "unexpected"))
         }

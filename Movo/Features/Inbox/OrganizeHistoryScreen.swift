@@ -123,7 +123,7 @@ public struct OrganizeHistoryScreen: View {
         case .aiPartial:
             StatusTag(text: "已应用（部分）", foreground: MovoColor.done, background: MovoColor.soft, systemImage: "checkmark.circle")
         case .pendingConfirmation:
-            StatusTag(text: "待确认", foreground: MovoColor.accent, background: MovoColor.soft, systemImage: "clock.badge.checkmark")
+            StatusTag(text: "待确认", foreground: MovoColor.inProgress, background: MovoColor.soft, systemImage: "clock.badge.checkmark")
         case .processing:
             StatusTag(text: "整理中", foreground: MovoColor.warning, background: MovoColor.soft, systemImage: "circle.dotted")
         case .aiFailed:

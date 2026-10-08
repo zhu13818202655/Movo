@@ -12,7 +12,9 @@ import MovoKit
 
 public struct RecentlyDeletedScreen: View {
     @Environment(AppEnvironment.self) private var env
-    @Environment(\.movoRouter) private var router
+    /// 关闭本页：本页由设置的「查看」以浮层呈现（也对应 `.recentlyDeleted` 路由），
+    /// 用 dismiss 关闭当前呈现，而不是关掉另一个由 Router 管理的浮层。
+    @Environment(\.dismiss) private var dismiss
 
     @State private var tombstones: [Tombstone] = []
     @State private var names: [UUID: String] = [:]
@@ -25,7 +27,7 @@ public struct RecentlyDeletedScreen: View {
             ScreenChrome("最近删除",
                          subtitle: "保留 \(env.defaults.lifecycle.tombstoneRetentionDays) 天，可以恢复") {
                 #if !os(macOS)
-                MovoIconButton("xmark", label: "关闭") { router.dismissSheet() }
+                MovoIconButton("xmark", label: "关闭") { dismiss() }
                 #endif
             }
 

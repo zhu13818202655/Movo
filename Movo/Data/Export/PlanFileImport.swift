@@ -332,14 +332,7 @@ public enum PlanFileImporter {
         var b = Array(digest.prefix(16))
         b[6] = (b[6] & 0x0F) | 0x50
         b[8] = (b[8] & 0x3F) | 0x80
-       ExistingPlan: Sendable {
-    var plan: Plan
-    var stages: [Stage]
-    var metrics: [PlanMetric]
-    var tasks: [Task]
-}
-
-struct  return UUID(uuid: (b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+        return UUID(uuid: (b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
                            b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]))
     }
 }
@@ -453,18 +446,18 @@ struct Builder {
     /// 在同一范围内给条目分配 id；文件 id 重复时报错并返回 nil。
     mutating func define(_ external: String?, scope: String, in plan: inout PlanScope, path: String) -> UUID? {
         let result = plan.ids.define(external, scope: scope)
-      / 没有目标计划时，顶层的阶段、指标、记录、测量值无处可放：明确报错而不是忽略
-    mutating func requirePlan(for kind: String, count: Int) {
-        guard count > 0 else { return }
-        report(.error, "文件顶层的\(kind)（\(count) 项）",
-               "\(kind)需要放进一个计划。请在「导入到」里选择一个已有计划，这些内容没有导入。")
-    }
-
-    //  if result.isDuplicate {
+        if result.isDuplicate {
             report(.error, path, "文件里有两个相同的 id「\(external ?? "")」，这一项没有导入。")
             return nil
         }
         return result.id
+    }
+
+    // 没有目标计划时，顶层的阶段、指标、记录、测量值无处可放：明确报错而不是忽略
+    mutating func requirePlan(for kind: String, count: Int) {
+        guard count > 0 else { return }
+        report(.error, "文件顶层的\(kind)（\(count) 项）",
+               "\(kind)需要放进一个计划。请在「导入到」里选择一个已有计划，这些内容没有导入。")
     }
 
     // MARK: 计划

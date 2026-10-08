@@ -51,7 +51,6 @@ public struct ScreenHost: View {
         case .processing(let captureID): ProcessingScreen(captureID: captureID)
         case .captureFailed(let captureID): CaptureFailedScreen(captureID: captureID)
         case .captureResult(let captureID): CaptureResultScreen(captureID: captureID)
-        case .localOnlyCapture: LocalOnlyCaptureSheet()
 
         // 设置与管理
         case .settingsSection(let section): SettingsSectionScreen(section: section)

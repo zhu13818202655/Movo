@@ -63,26 +63,51 @@ final class PrivacyTests: XCTestCase {
 
     // MARK: - 全局 AI 关闭时不发请求
 
+    /// 记录 provider 被调用次数，用于证明「关闭 AI 就不会触达网络」。
+    private final class CountingProposalProvider: AIProvider, @unchecked Sendable {
+        let proposal: AIProposal
+        private(set) var callCount = 0
+
+        init(proposal: AIProposal) { self.proposal = proposal }
+
+        var id: AIVendor { .deepseek }
+        var displayName: String { "计数替身" }
+        var currentModel: String { "deepseek-chat" }
+        func availableModels() -> [ModelInfo] { [] }
+        func testConnection() async throws { }
+
+        func proposeOperations(_ input: AIInput) async throws -> AIProposal {
+            callCount += 1
+            return proposal
+        }
+    }
+
+    @MainActor
     func testGlobalAIDisabledDoesNotSendRequest() async throws {
-        let store = DomainStore(repository: InMemoryRepository(), clock: TravelClock(today.noon),
+        let repo = InMemoryRepository()
+        let store = DomainStore(repository: repo, clock: TravelClock(today.noon),
                                 timeZoneProvider: FixedTimeZoneProvider(identifier: tz.identifier),
-                                deviceIDProvider: FixedDeviceIDProvider("privacy-test"))
-        let settingsStore = InMemoryAISettingsStore(AISettings(globalAIEnabled: false))
-        let env = AppEnvironment(store: store, defaults: .fallback,
-                                 catalog: ConfigLoader.loadModelCatalog(),
-                                 keyStore: InMemoryAIKeyStore(),
-                                 speech: MockSpeechTranscriptionService(),
-                                 notificationScheduler: InMemoryNotificationScheduler(),
-                                 aiSettingsStore: settingsStore)
+                                deviceIDProvider: FixedDeviceIDProvider("privacy-test"),
+                                defaults: .fallback)
+        let created = try await store.execute(ProcessCapture(rawText: "明天跑步五公里"))
+        let captureID = try XCTUnwrap(created.entityID, "原文必须先落库，任何情况下都不丢")
 
-        let captureID = await env.submitCapture(text: "明天跑步五公里")
-        let id = try XCTUnwrap(captureID)
-        await env.processCapture(id)
+        let provider = CountingProposalProvider(proposal: AIProposal(items: [
+            AIProposalItem(span: [], action: .createTask,
+                           task: AIProposalTask(title: "跑步五公里", startAt: "2026-09-29"),
+                           confidence: 0.9)
+        ]))
+        let request = ProposalRequest(captureID: captureID, rawText: "明天跑步五公里",
+                                      today: today, timeZone: tz, deviceId: "privacy-test",
+                                      plans: [], globalAIEnabled: false)
+        let preparation = await ProposalService(provider: provider, defaults: .fallback).prepare(request)
 
-        let preparation = env.captureResults[id]
-        XCTAssertTrue(preparation?.skippedCloudCall ?? false, "全局 AI 关闭时必须跳过云调用")
-        XCTAssertNotNil(preparation?.error, "应记录 AI 已关闭并保留原文的提示")
-        let capture = await store.repository.capture(id)
+        XCTAssertTrue(preparation.skippedCloudCall, "全局 AI 关闭时必须跳过云调用")
+        XCTAssertEqual(provider.callCount, 0, "全局 AI 关闭时不得调用任何模型服务")
+        XCTAssertNotNil(preparation.error, "应记录 AI 已关闭并保留原文的提示")
+        XCTAssertNil(preparation.proposal, "跳过调用时不应产出提案")
+
+        let capture = await repo.capture(captureID)
         XCTAssertEqual(capture?.rawText, "明天跑步五公里", "原文完好保留在仓库中")
     }
 
@@ -92,8 +117,6 @@ final class PrivacyTests: XCTestCase {
         let key = "sk-proj-abcdefghijklmnop1234"
         let masked = AIKeyFormat.mask(key)
         XCTAssertEqual(masked, "sk-…1234")
-    }
-}
         XCTAssertFalse(masked.contains("abcdefghijklmnop"))
         XCTAssertTrue(AIKeyFormat.looksValid(key, vendor: .deepseek))
         XCTAssertFalse(AIKeyFormat.looksValid("short", vendor: .deepseek), "过短的 Key 一律预检不通过")

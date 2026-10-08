@@ -86,7 +86,10 @@ public struct QuickCaptureSheet: View {
         }
         .movoPageBackground()
         #if os(macOS)
-        .frame(minWidth: 520, idealWidth: 620, minHeight: 560, idealHeight: 720)
+        // minWidth 不能超过常见小窗口（macOS 的 sheet 最宽只能到宿主窗口；
+        // 内容 insists 更大 minWidth 时会左右溢出被裁切）。plain 按钮在 Mac 上
+        // 不随 proposal 拉伸，底部按钮行最窄 ~250 + 页边距，380 以下不再压缩。
+        .frame(minWidth: 380, idealWidth: 620, minHeight: 480, idealHeight: 720)
         #endif
         .task {
             isVisible = true
@@ -152,7 +155,7 @@ public struct QuickCaptureSheet: View {
                     ForEach(plans) { Text($0.name).tag(Optional($0.id)) }
                 }
                 .disabled(recording)
-                Text("可选计划仅显示已允许云 AI 的计划；敏感内容仍留在本机。")
+                Text("可选计划只用于给新待办指定默认归属；是否把内容发给模型由全局 AI 开关决定。")
                     .font(MovoFont.caption).foregroundStyle(MovoColor.muted)
                 if let error = env.lastError {
                     MovoBanner(error: error) { action in
@@ -334,30 +337,5 @@ public struct TranscriptSheet: View {
         router.dismissSheet()
         router.push(.processing(captureID: captureID))
         await env.processCapture(captureID)
-    }
-}
-
-// MARK: - M04-LocalOnly 敏感计划本地录入
-
-public struct LocalOnlyCaptureSheet: View {
-    @Environment(\.movoRouter) private var router
-
-    public init() {}
-
-    public var body: some View {
-        MovoSheet {
-            MovoSheetHeader("这段内容留在本机", subtitle: "涉及健康或你标记为敏感的计划。",
-                            onClose: { router.dismissSheet() })
-
-            MovoBanner(kind: .info, title: "不会发送到云端",
-                       message: "Movo 只在本机做匹配：能对上的安排直接记录，其余放进收件箱等你归类。")
-
-            HStack(spacing: MovoSpace.s) {
-                MovoButton("我知道了", kind: .primary) { router.dismissSheet() }
-                MovoButton("去收件箱", kind: .quiet) { router.go(to: .section(.inbox), in: .inbox) }
-                Spacer(minLength: 0)
-            }
-        }
-        .background(MovoColor.bg)
     }
 }

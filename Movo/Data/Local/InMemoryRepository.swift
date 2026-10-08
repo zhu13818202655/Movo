@@ -21,6 +21,10 @@ public actor InMemoryRepository: DomainRepository {
     private var notes: [UUID: Note] = [:]
     private var captures: [UUID: Capture] = [:]
     private var batches: [UUID: OperationBatch] = [:]
+    /// 批的写入顺序（同一 `createdAt` 时用它决定先后，保证 recentBatches 与撤销窗口稳定）
+    private var batchOrder: [UUID] = []
+    /// 操作的写入顺序（同批内同 `createdAt` 时用它决定先后，保证撤销按逆序补偿）
+    private var operationOrder: [UUID] = []
     private var operations: [UUID: Operation] = [:]
     private var events: [ChangeEvent] = []
     private var suggestions: [UUID: Suggestion] = [:]
@@ -207,15 +211,38 @@ public actor InMemoryRepository: DomainRepository {
     // MARK: - Batch / Operation
     public func batch(_ id: UUID) async -> OperationBatch? { batches[id] }
     public func recentBatches(limit: Int) async -> [OperationBatch] {
-        batches.values.sorted { $0.createdAt > $1.createdAt }.prefix(limit).map { $0 }
+        let rank = Dictionary(batchOrder.enumerated().map { ($0.element, $0.offset) },
+                              uniquingKeysWith: { later, _ in later })
+        // 时间戳相同的批次按写入顺序判定先后，避免撤销窗口随字典遍历顺序变化。
+        return batches.values
+            .sorted { lhs, rhs in
+                if lhs.createdAt != rhs.createdAt { return lhs.createdAt > rhs.createdAt }
+                return (rank[lhs.id] ?? 0) > (rank[rhs.id] ?? 0)
+            }
+            .prefix(limit)
+            .map { $0 }
     }
-    public func upsert(_ batch: OperationBatch) async throws { batches[batch.id] = batch }
+    public func upsert(_ batch: OperationBatch) async throws {
+        if batches[batch.id] == nil { batchOrder.append(batch.id) }
+        batches[batch.id] = batch
+    }
     public func operation(_ id: UUID) async -> Operation? { operations[id] }
     public func operations(batchID: UUID) async -> [Operation] {
-        operations.values.filter { $0.batchId == batchID }.sorted { $0.createdAt < $1.createdAt }
+        let rank = Dictionary(operationOrder.enumerated().map { ($0.element, $0.offset) },
+                              uniquingKeysWith: { later, _ in later })
+        // 时刻相同的操作按写入顺序排列：撤销依赖这个顺序做逆序补偿。
+        return operations.values
+            .filter { $0.batchId == batchID }
+            .sorted { lhs, rhs in
+                if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
+                return (rank[lhs.id] ?? 0) < (rank[rhs.id] ?? 0)
+            }
     }
     public func pendingOperations() async -> [Operation] { operations.values.filter { $0.status == .pending } }
-    public func upsert(_ operation: Operation) async throws { operations[operation.id] = operation }
+    public func upsert(_ operation: Operation) async throws {
+        if operations[operation.id] == nil { operationOrder.append(operation.id) }
+        operations[operation.id] = operation
+    }
 
     // MARK: - ChangeEvent
     public func append(_ event: ChangeEvent) async throws {
@@ -305,6 +332,7 @@ public actor InMemoryRepository: DomainRepository {
         notes.removeAll(); captures.removeAll(); batches.removeAll(); operations.removeAll()
         events.removeAll(); suggestions.removeAll(); reviewNotes.removeAll(); conflicts.removeAll()
         tombstones.removeAll(); searchDocs.removeAll()
+        batchOrder.removeAll(); operationOrder.removeAll()
     }
 
     /// 性能基线：批量写入 n 个任务

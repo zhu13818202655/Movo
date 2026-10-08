@@ -650,19 +650,18 @@ public struct ReviewFact: Identifiable, Hashable, Sendable {
     public var plannedCount: Int?
     public var metricChanges: [MetricTrend]
     public var structuralEvents: [String]
-    public var isLocalOnly: Bool
     public var sourceSummary: String
     public var activityIDs: [UUID]
 
     public init(planId: UUID?, planName: String, category: PlanCategory? = nil, actionCount: Int = 0,
                 typicalDurationMinutes: Int? = nil, skippedCount: Int = 0, unrecordedCount: Int = 0,
                 plannedCount: Int? = nil, metricChanges: [MetricTrend] = [], structuralEvents: [String] = [],
-                isLocalOnly: Bool = false, sourceSummary: String = "", activityIDs: [UUID] = []) {
+                sourceSummary: String = "", activityIDs: [UUID] = []) {
         self.planId = planId; self.planName = planName; self.category = category
         self.actionCount = actionCount; self.typicalDurationMinutes = typicalDurationMinutes
         self.skippedCount = skippedCount; self.unrecordedCount = unrecordedCount
         self.plannedCount = plannedCount; self.metricChanges = metricChanges
-        self.structuralEvents = structuralEvents; self.isLocalOnly = isLocalOnly
+        self.structuralEvents = structuralEvents
         self.sourceSummary = sourceSummary; self.activityIDs = activityIDs
     }
 
@@ -673,9 +672,6 @@ public struct ReviewFact: Identifiable, Hashable, Sendable {
         if unrecordedCount > 0 { s += " · 未记录\(unrecordedCount)次" }
         return s
     }
-
-    /// 只展示本地行动记录，不将健康内容发送给云 AI
-    public var excludedFromCloudAI: Bool { isLocalOnly }
 }
 
 public struct ReviewGap: Identifiable, Hashable, Sendable {

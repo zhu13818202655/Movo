@@ -663,18 +663,6 @@ struct ManageSettingsView: View {
             }
         }
 
-        #if DEBUG
-        MovoFormSection("演示数据", footnote: "载入与设计稿一致的示例数据（季度汇报 3/7、散步 0/3、体重 68.7）。仅调试版本可见。") {
-            Toggle(isOn: $demoEnabled) {
-                Text("载入示例数据").font(MovoFont.body).foregroundStyle(MovoColor.ink)
-            }
-            .toggleStyle(.switch)
-            .onChange(of: demoEnabled) { _, isOn in
-                if isOn { _Concurrency.Task { try? await DemoFixtures.seed(into: env.store) } }
-            }
-        }
-        #endif
-
         MovoFormSection("清除数据",
                         footnote: "此操作不可撤销。清除后不会补造任何历史记录。") {
             MovoButton("清除全部本地数据", kind: .destructive) { showPurgeConfirm = true }

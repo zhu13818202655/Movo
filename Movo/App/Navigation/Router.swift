@@ -38,6 +38,13 @@ public final class Router: @unchecked Sendable {
 
     // MARK: - 操作
 
+    // 关闭当前页面的规则（避免同类 bug 复发）：
+    //   页面「关闭 / 取消 / 完成」一律用 SwiftUI 的 `@Environment(\.dismiss)`——
+    //   它既能弹出导航栈，也能关闭浮层，页面不需要知道自己是怎么被呈现的。
+    //   `pop()` 只改 `paths`，`dismissSheet()` 只清 `sheet`；如果页面实际由另一种
+    //   方式呈现，这两个调用会静默失效（按钮看起来「点了没反应」）。
+    //   它们只在明确知道当前呈现方式时使用，例如由 Router 主动切换的采集流水线。
+
     public func push(_ route: Route) {
         sheet = nil
         paths[section, default: []].append(route)

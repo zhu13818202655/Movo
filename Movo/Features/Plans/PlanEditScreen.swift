@@ -4,7 +4,7 @@
 //
 //  M08-NewPlan 新建计划 / M08-EditPlan 编辑计划。
 //  名称是唯一必填项（REQ 07）；可同时建立阶段与结果指标；
-//  「允许云端 AI」与「云同步」是两个独立开关（P3 完成条件）。
+//  计划设置只保留「同步到 iCloud」；是否把内容发给模型由全局 AI 开关决定（6.3）。
 //
 
 import SwiftUI
@@ -13,6 +13,9 @@ import MovoKit
 public struct PlanEditScreen: View {
     @Environment(AppEnvironment.self) private var env
     @Environment(\.movoRouter) private var router
+    /// 关闭本页：本页由 `.newPlan` / `.editPlan` 以浮层呈现，也可能被压入导航栈。
+    /// 用 SwiftUI 的 dismiss 让两种呈现方式都能正确关闭（`Router.pop()` 只作用于导航栈）。
+    @Environment(\.dismiss) private var dismiss
 
     let planID: UUID?
 
@@ -186,13 +189,6 @@ public struct PlanEditScreen: View {
                         }
                     }
                     .toggleStyle(.switch)
-                }
-                            Text("关闭后只保留在本机，不影响云 AI 开关。")
-                                .font(MovoFont.caption).foregroundStyle(MovoColor.muted)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                    .toggleStyle(.switch)
 
                     MovoTextField("别名（用逗号分隔，可选）", text: $aliasesText,
                                   placeholder: "例如：季度汇报, Q3")
@@ -220,7 +216,7 @@ public struct PlanEditScreen: View {
                            isEnabled: canSave, isLoading: isSaving) {
                     _Concurrency.Task { await save() }
                 }
-                MovoButton("取消", kind: .quiet) { router.pop() }
+                MovoButton("取消", kind: .quiet) { dismiss() }
                 Spacer(minLength: 0)
             }
         }
@@ -327,7 +323,7 @@ public struct PlanEditScreen: View {
                     syncEnabled: syncEnabled))
             }
             env.lastBatchNotice = env.store.lastNotification
-            router.pop()
+            dismiss()
         } catch let error as MovoError {
             env.lastError = error
         } catch {
@@ -400,7 +396,9 @@ public struct PlanEditScreen: View {
         do {
             try await env.store.execute(DeletePlan(planID: planID, baseRevision: original.revision))
             env.lastBatchNotice = env.store.lastNotification
-            router.pop()
+            dismiss()
+            // 计划已经不在：下面那层「计划详情」也一起收起，不要停在一个读不到内容的页面
+            if router.path(for: router.section).last == .planDetail(planID) { router.pop() }
         } catch let error as MovoError {
             env.lastError = error
         } catch { }

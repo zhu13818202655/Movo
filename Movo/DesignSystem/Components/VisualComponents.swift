@@ -515,7 +515,6 @@ public struct MovoTimelineView: View {
         }
     }
 
-    @ViewBuilder
     private func timeRangeText(start: TimePoint?, end: TimePoint?) -> some View {
         let text: String
         if let start, let end {
@@ -527,7 +526,7 @@ public struct MovoTimelineView: View {
         } else {
             text = "未设置时间"
         }
-        Text(text).font(MovoFont.caption).foregroundStyle(MovoColor.muted)
+        return Text(text).font(MovoFont.caption).foregroundStyle(MovoColor.muted)
     }
 }
 

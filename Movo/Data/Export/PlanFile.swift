@@ -6,6 +6,7 @@
 //  · 面向交换而不是备份：只含结构与内容，不含设备标识、API Key、音频。
 //  · 文件内的 id 是外部标识，导入时映射为新的实体 id；不写 id 的条目也能导入。
 //  · 多级子任务用 `children` 嵌套，重复行动的多级步骤用 `steps` 嵌套。
+//  · 顶层任务写回所属阶段的 id（`stage`）；子任务与步骤跟随上级的阶段，不重复写。
 //  · 时间：某一天写 yyyy-MM-dd，某一时刻写带时区偏移的 ISO8601。
 //
 
@@ -317,7 +318,7 @@ public enum PlanFileBuilder {
                              options: PlanFileOptions, exportedAt: Date) -> PlanFile {
         let stamp = ISO8601DateFormatter().string(from: exportedAt)
         let plans = selections.map { plan(from: $0, options: options) }
-        let loose = taskTree(standaloneTasks, rules: standaloneRules)
+        let loose = taskTree(standaloneTasks, rules: standaloneRules, stages: [])
         var notes: [FileNote] = []
         if options.includeNotes {
             notes = standaloneNotes.sorted { $0.capturedAt < $1.capturedAt }
@@ -366,17 +367,21 @@ public enum PlanFileBuilder {
                         aliases: plan.aliases.isEmpty ? nil : plan.aliases,
                         stages: stages.isEmpty ? nil : stages,
                         metrics: metrics.isEmpty ? nil : metrics,
-                        tasks: nilIfEmpty(taskTree(selection.tasks, rules: selection.rules)),
+                        tasks: nilIfEmpty(taskTree(selection.tasks, rules: selection.rules,
+                                                   stages: selection.stages)),
                         records: nilIfEmpty(records), measurements: nilIfEmpty(measurements),
                         notes: nilIfEmpty(notes))
     }
 
-    /// 平铺任务 → 嵌套树。步骤收进 `steps`，普通子任务收进 `children`。
-    static func taskTree(_ tasks: [Task], rules: [RecurrenceRule]) -> [FileTask] {
+    /// 平铺任务 → 嵌套树。步骤收进 `steps`，普通子任务收进 `children`；
+    /// `stages` 是该计划内的阶段，用于把顶层任务的 `stageId` 写成阶段 id（与文件里
+    /// 阶段条目的 `id` 一致）。子任务与步骤跟随上级的阶段，不重复写 `stage`。
+    static func taskTree(_ tasks: [Task], rules: [RecurrenceRule], stages: [Stage] = []) -> [FileTask] {
         let ids = Set(tasks.map(\.id))
         let ordered = TaskHierarchy.ordered(tasks)
         let byParent = Dictionary(grouping: ordered, by: \.parentId)
         let ruleByTask = Dictionary(rules.map { ($0.taskId, $0) }, uniquingKeysWith: { first, _ in first })
+        let stageIDs = Set(stages.map(\.id))
 
         func steps(of parent: UUID, visited: Set<UUID>) -> [FileStep] {
             (byParent[parent] ?? []).filter { $0.isStep && !visited.contains($0.id) }.map { step in
@@ -393,6 +398,10 @@ public enum PlanFileBuilder {
                                 estimateMinutes: task.estimateMinutes,
                                 priority: task.priority?.rawValue,
                                 tags: task.tags.isEmpty ? nil : task.tags)
+            if task.parentId == nil || !ids.contains(task.parentId!),
+               let stageID = task.stageId, stageIDs.contains(stageID) {
+                file.stage = stageID.uuidString
+            }
             file.dependsOn = task.dependencyIDs.filter { ids.contains($0) }.map(\.uuidString)
             if file.dependsOn?.isEmpty == true { file.dependsOn = nil }
             if task.isTemplate {

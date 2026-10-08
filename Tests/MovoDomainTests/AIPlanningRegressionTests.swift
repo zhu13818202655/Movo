@@ -98,8 +98,9 @@ final class AIPlanningRegressionTests: XCTestCase {
         _ = try await first.executeBatch(BatchInput(batchID: captureID, captureId: captureID, commands: commands()))
         let plan = await repository.plan(planID)
         XCTAssertEqual(plan?.name, "搬家")
-        XCTAssertEqual(plan?.cloudAIEnabled, false)
-        XCTAssertEqual(plan?.syncEnabled, false)
+        // 计划级开关按分类默认（无分类 → 允许），AI 不额外改写；是否发云调用只由全局 AI 开关决定。
+        XCTAssertEqual(plan?.cloudAIEnabled, true)
+        XCTAssertEqual(plan?.syncEnabled, true)
         let tasks = await repository.allTasks()
         XCTAssertEqual(tasks.count, 2)
         XCTAssertTrue(tasks.allSatisfy { $0.planId == planID })

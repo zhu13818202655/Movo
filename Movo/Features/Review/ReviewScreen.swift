@@ -89,9 +89,6 @@ public struct ReviewScreen: View {
                             Text(fact.planName).font(MovoFont.headline)
                                 .foregroundStyle(MovoColor.ink)
                             if let category = fact.category { PlanCategoryTag(category, compact: true) }
-                            if fact.isLocalOnly {
-                                MovoTag("仅本机统计", systemImage: "lock")
-                            }
                             Spacer(minLength: 0)
                         }
 

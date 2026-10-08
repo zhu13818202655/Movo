@@ -139,8 +139,9 @@ public enum ProposalValidator {
                                 captureID: UUID?,
                                 source: SourceKind) -> ValidatedProposal {
 
-        var commands: [any DomainCommand] = []
-        var commandKeys: [UUID: String] = [:]
+        // 命令在用户确认后由 `materializeBatch` 生成，校验阶段只产出待确认项与未过项。
+        let commands: [any DomainCommand] = []
+        let commandKeys: [UUID: String] = [:]
         var needsConfirmation: [PendingProposal] = []
         var issues: [ProposalIssue] = []
         var corrections: [String] = []
@@ -373,6 +374,21 @@ public enum ProposalValidator {
                                                         reasons: [.structureViolation("计划待办缺少有效标题")]))
                         continue
                     }
+                    // 直接写 UUID 的归属必须真实存在；批内临时引用走 `stage_ref` / `parent_ref` 前置扫描。
+                    if let rawStage = task.stageId, !rawStage.isEmpty {
+                        guard let sUUID = UUID(uuidString: rawStage), input.allowedStageIDs.contains(sUUID) else {
+                            taskIssues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                            reasons: [.unknownReference(rawStage)]))
+                            continue
+                        }
+                    }
+                    if let rawParent = task.parentTaskId, !rawParent.isEmpty {
+                        guard let pUUID = UUID(uuidString: rawParent), input.allowedTaskIDs.contains(pUUID) else {
+                            taskIssues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                            reasons: [.unknownReference(rawParent)]))
+                            continue
+                        }
+                    }
                     let tStart = Self.parseTime(task.startAt, timeZone: timeZone)
                     let tEnd = Self.parseTime(task.endAt, timeZone: timeZone)
                     guard tStart.isValid, tEnd.isValid else {
@@ -435,15 +451,7 @@ public enum ProposalValidator {
 
                 var planID: UUID?
                 if let raw = spec?.planId, !raw.isEmpty {
-                    guard let uuid = UUID(uuidString: raw) else {
-                        if !declaredPlanRefs.contains(raw) {
-                            issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
-                                                        reasons: [.unknownReference(raw)]))
-                            continue
-                        }
-                        planID = nil
-                    }
-                    if let uuid {
+                    if let uuid = UUID(uuidString: raw) {
                         guard input.allowedPlanIDs.contains(uuid), planByID[uuid] != nil else {
                             issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
                                                         reasons: [.unknownReference(raw)]))
@@ -455,6 +463,10 @@ public enum ProposalValidator {
                             continue
                         }
                         planID = uuid
+                    } else if !declaredPlanRefs.contains(raw) {
+                        issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                    reasons: [.unknownReference(raw)]))
+                        continue
                     }
                 }
 
@@ -467,6 +479,13 @@ public enum ProposalValidator {
                 }
 
                 if let rawParent = spec?.parentTaskId, !rawParent.isEmpty {
+                    // 重复行动只能挂步骤，不能当别人的子任务——与其父 ID 是否存在无关，先判这条。
+                    if (spec?.recurrence ?? item.recurrence)?.pattern != nil {
+                        issues.append(ProposalIssue(
+                            itemID: item.id, sourceSpan: item.sourceSpan,
+                            reasons: [.structureViolation("重复任务模板不能放在其它待办下面")]))
+                        continue
+                    }
                     guard let pUUID = UUID(uuidString: rawParent), input.allowedTaskIDs.contains(pUUID) else {
                         issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
                                                     reasons: [.unknownReference(rawParent)]))

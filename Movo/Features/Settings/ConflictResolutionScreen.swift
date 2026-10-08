@@ -12,7 +12,8 @@ import MovoKit
 
 public struct ConflictResolutionScreen: View {
     @Environment(AppEnvironment.self) private var env
-    @Environment(\.movoRouter) private var router
+    /// 关闭本页：本页从设置或同步徽标被压入导航栈。
+    @Environment(\.dismiss) private var dismiss
 
     @State private var conflicts: [SyncConflict] = []
     @State private var titles: [UUID: String] = [:]
@@ -25,7 +26,7 @@ public struct ConflictResolutionScreen: View {
         ScreenScroll {
             ScreenChrome("同步冲突", subtitle: "两份都保留，由你选择") {
                 #if !os(macOS)
-                MovoIconButton("xmark", label: "关闭") { router.dismissSheet() }
+                MovoIconButton("xmark", label: "关闭") { dismiss() }
                 #endif
             }
 

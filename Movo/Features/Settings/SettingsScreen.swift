@@ -3,7 +3,7 @@
 //  Features/Settings
 //
 //  M13 设置 / D01-Settings。分区：AI 与数据 / 计划隐私 / 同步 / 通知 / 导出 / 管理。
-//  两个开关彼此独立：「允许云端 AI」只影响整理，「云同步」只影响是否上云（P3 完成条件）。
+//  全局「AI 开关」只影响整理是否上云；逐计划「同步到 iCloud」只影响该计划是否同步（两者独立，P3 完成条件）。
 //  iPhone 从今日右上角进入，Mac 从侧边导航底部进入。
 //
 
@@ -76,7 +76,7 @@ enum SettingsSummary {
         case .export:
             return "Markdown / JSON"
         case .manage:
-            return "最近删除 · 演示数据"
+            return "最近删除 · 数据维护"
         }
     }
 }

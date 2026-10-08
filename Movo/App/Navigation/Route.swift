@@ -74,7 +74,6 @@ public enum Route: Hashable, Identifiable, Sendable {
     case processing(captureID: UUID)
     case captureFailed(captureID: UUID)
     case captureResult(captureID: UUID)
-    case localOnlyCapture
 
     // 设置子页（M13 系列 / D01-Settings）
     case settingsSection(RecoveryAction.SettingsSection)
@@ -106,7 +105,6 @@ public enum Route: Hashable, Identifiable, Sendable {
         case .processing(let id): "processing-\(id.uuidString)"
         case .captureFailed(let id): "capture-failed-\(id.uuidString)"
         case .captureResult(let id): "capture-result-\(id.uuidString)"
-        case .localOnlyCapture: "local-only-capture"
         case .settingsSection(let s): "settings-\(s.rawValue)"
         case .recentlyDeleted: "recently-deleted"
         case .exportPreview(let id): "export-\(id?.uuidString ?? "all")"
@@ -143,7 +141,6 @@ public enum Route: Hashable, Identifiable, Sendable {
         case .processing: "M04-Processing 整理中"
         case .captureFailed: "M04-Failed 原文已保留"
         case .captureResult: "M02 系列 AI 整理结果"
-        case .localOnlyCapture: "M04-LocalOnly 敏感计划本地录入"
         case .settingsSection: "D01-Settings / M13 分区"
         case .recentlyDeleted: "M13-Recovery 最近删除"
         case .exportPreview: "M13-Export 导出预览"

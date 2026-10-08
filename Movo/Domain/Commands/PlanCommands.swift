@@ -65,8 +65,7 @@ public struct PlanPatch: Sendable, Hashable {
             && cloudAIEnabled == nil && syncEnabled == nil && status == nil && sortIndex == nil
     }
 
-    /// 与"允许云 AI"和"云同步"分别对应（两个独立开关）
-    public var touchesCloudAISwitch: Bool { cloudAIEnabled != nil }
+    /// patch 是否改动了逐计划「同步到 iCloud」开关（默认开启，可逐计划关闭）
     public var touchesSyncSwitch: Bool { syncEnabled != nil }
 }
 

@@ -15,6 +15,9 @@ import MovoKit
 public struct RecurrenceEditorScreen: View {
     @Environment(AppEnvironment.self) private var env
     @Environment(\.movoRouter) private var router
+    /// 关闭本页：`.recurrenceEditor` 由任务详情以浮层呈现，
+    /// `Router.pop()` 只动导航栈，用 dismiss 才能真的关掉浮层。
+    @Environment(\.dismiss) private var dismiss
 
     let taskID: UUID
 
@@ -151,7 +154,7 @@ public struct RecurrenceEditorScreen: View {
                         _Concurrency.Task { await save() }
                     }
                 }
-                MovoButton("取消", kind: .quiet) { router.pop() }
+                MovoButton("取消", kind: .quiet) { dismiss() }
                 Spacer(minLength: 0)
             }
         }
@@ -279,7 +282,7 @@ public struct RecurrenceEditorScreen: View {
             }
             env.pendingRecurrence = nil
             env.lastBatchNotice = env.store.lastNotification
-            router.pop()
+            dismiss()
         } catch let error as MovoError {
             env.lastError = error
         } catch {

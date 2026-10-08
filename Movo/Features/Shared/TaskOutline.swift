@@ -60,76 +60,119 @@ struct TaskOutline: View {
         }
     }
 
+    /// 每层缩进宽度。需 ≥ 展开箭头列宽（28 + 页边距），子级的图标与标题
+    /// 才能明显落在父级右侧；层级越深逐层后退。
+    private var indentUnit: CGFloat {
+        #if os(macOS)
+        40
+        #else
+        32
+        #endif
+    }
+
     private func outlineRow(_ row: Row) -> some View {
         let node = row.node
-        return HStack(spacing: MovoSpace.xs) {
-            #if os(macOS)
-            if row.depth > 0 { Color.clear.frame(width: CGFloat(min(row.depth, 5)) * 16, height: 1) }
-            #endif
-            if !node.children.isEmpty {
-                Button {
-                    if collapsed.contains(node.id) { collapsed.remove(node.id) } else { collapsed.insert(node.id) }
-                } label: {
-                    Image(systemName: collapsed.contains(node.id) ? "chevron.right" : "chevron.down")
+        let levels = min(row.depth, 5)
+        return HStack(alignment: .center, spacing: 0) {
+            // 层级区：每层一个缩进格；最内层画一条浅色竖线，对齐父级展开箭头的中心，
+            // 连续子行的竖线连成一片，标出「这些行都属于上面的父级」。
+            ForEach(0..<levels, id: \.self) { level in
+                ZStack(alignment: .leading) {
+                    Color.clear
+                    if level == levels - 1 {
+                        Rectangle().fill(MovoColor.line)
+                            .frame(width: 1)
+                            .padding(.leading, MovoSpace.s + 14)
+                    }
+                }
+                .frame(width: indentUnit)
+            }
+            HStack(spacing: MovoSpace.xs) {
+                if !node.children.isEmpty {
+                    Button {
+                        if collapsed.contains(node.id) { collapsed.remove(node.id) } else { collapsed.insert(node.id) }
+                    } label: {
+                        Image(systemName: collapsed.contains(node.id) ? "chevron.right" : "chevron.down")
+                            .frame(width: 28, height: MovoSpace.minTouch)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(collapsed.contains(node.id) ? "展开子任务" : "折叠子任务")
+                }
+                if node.hasChildren {
+                    // 父级不直接勾选（完成度由子级汇总），用进度环表达 k/n；
+                    // 全部完成时与叶子的实心对勾一致，点击与标题一样进详情。
+                    Button { router.push(.taskDetail(node.id)) } label: {
+                        Group {
+                            if node.total > 0, node.done >= node.total {
+                                Image(systemName: "checkmark.circle.fill")
+                            } else {
+                                ZStack {
+                                    Circle().stroke(MovoColor.line, lineWidth: 2)
+                                    Circle().trim(from: 0, to: CGFloat(node.done) / CGFloat(max(node.total, 1)))
+                                        .stroke(MovoColor.primary, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                                        .rotationEffect(.degrees(-90))
+                                }
+                                .frame(width: 18, height: 18)
+                            }
+                        }
+                        .foregroundStyle(MovoColor.primary)
                         .frame(width: 28, height: MovoSpace.minTouch)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("查看详情，子任务 \(node.done)/\(node.total) 已完成")
+                } else {
+                    Button { _Concurrency.Task { await toggle(node) } } label: {
+                        Image(systemName: node.task.isTemplate ? "arrow.triangle.2.circlepath"
+                              : node.isComplete ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(MovoColor.primary).frame(width: 28, height: MovoSpace.minTouch)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(node.task.isTemplate ? "记录本次" : node.isComplete ? "重新打开" : "标记完成")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(collapsed.contains(node.id) ? "展开子任务" : "折叠子任务")
+                Button { router.push(.taskDetail(node.id)) } label: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(node.task.title).font(MovoFont.bodyEmphasis)
+                            .foregroundStyle(node.isContext ? MovoColor.muted : MovoColor.ink)
+                            .strikethrough(node.isComplete)
+                            .multilineTextAlignment(.leading)
+                        Text(metadata(node, parentTitle: row.parentTitle)).font(MovoFont.caption).foregroundStyle(MovoColor.muted)
+                            .multilineTextAlignment(.leading)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                }.buttonStyle(.plain)
+                Menu {
+                    Button("就地编辑") { editing = node.id; inlineParent = nil }
+                    if !node.task.isTemplate {
+                        Button("添加子任务") {
+                            inlineParent = node.id; editing = nil
+                            collapsed.remove(node.id)
+                        }
+                        Button("移动到…") { router.present(.moveTask(node.id)) }
+                        #if os(macOS)
+                        if let previous = row.previousSibling {
+                            Button("缩进为上一项的子任务") { _Concurrency.Task { await move(node, parentID: previous) } }
+                        }
+                        #endif
+                        if node.task.parentId != nil {
+                            Button("提升一级") { _Concurrency.Task { await outdent(node) } }
+                        }
+                    }
+                    Button("设置日期、优先级等") { router.push(.taskDetail(node.id)) }
+                    Button("删除…", role: .destructive) {
+                        _Concurrency.Task {
+                            deleting = node
+                            deletionIDs = Set(await DeleteTask.targets(taskID: node.id, repository: env.store.repository)
+                                .filter { $0.0 == .task }.map(\.1))
+                            showDelete = true
+                        }
+                    }
+                } label: { Image(systemName: "ellipsis").frame(width: 32, height: MovoSpace.minTouch) }
+                .menuStyle(.borderlessButton).fixedSize()
+                .accessibilityLabel("待办操作")
             }
-            if node.hasChildren {
-                Image(systemName: node.isComplete ? "checkmark.circle.fill" : "square.stack")
-                    .foregroundStyle(MovoColor.primary).frame(width: 28)
-            } else {
-                Button { _Concurrency.Task { await toggle(node) } } label: {
-                    Image(systemName: node.task.isTemplate ? "arrow.triangle.2.circlepath"
-                          : node.isComplete ? "checkmark.circle.fill" : "circle")
-                        .foregroundStyle(MovoColor.primary).frame(width: 28, height: MovoSpace.minTouch)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(node.task.isTemplate ? "记录本次" : node.isComplete ? "重新打开" : "标记完成")
-            }
-            Button { router.push(.taskDetail(node.id)) } label: {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(node.task.title).font(MovoFont.bodyEmphasis)
-                        .foregroundStyle(node.isContext ? MovoColor.muted : MovoColor.ink)
-                        .strikethrough(node.isComplete)
-                        .multilineTextAlignment(.leading)
-                    Text(metadata(node, parentTitle: row.parentTitle)).font(MovoFont.caption).foregroundStyle(MovoColor.muted)
-                        .multilineTextAlignment(.leading)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-            }.buttonStyle(.plain)
-            Menu {
-                Button("就地编辑") { editing = node.id; inlineParent = nil }
-                if !node.task.isTemplate {
-                    Button("添加子任务") {
-                        inlineParent = node.id; editing = nil
-                        collapsed.remove(node.id)
-                    }
-                    Button("移动到…") { router.present(.moveTask(node.id)) }
-                    #if os(macOS)
-                    if let previous = row.previousSibling {
-                        Button("缩进为上一项的子任务") { _Concurrency.Task { await move(node, parentID: previous) } }
-                    }
-                    #endif
-                    if node.task.parentId != nil {
-                        Button("提升一级") { _Concurrency.Task { await outdent(node) } }
-                    }
-                }
-                Button("设置日期、优先级等") { router.push(.taskDetail(node.id)) }
-                Button("删除…", role: .destructive) {
-                    _Concurrency.Task {
-                        deleting = node
-                        deletionIDs = Set(await DeleteTask.targets(taskID: node.id, repository: env.store.repository)
-                            .filter { $0.0 == .task }.map(\.1))
-                        showDelete = true
-                    }
-                }
-            } label: { Image(systemName: "ellipsis").frame(width: 32, height: MovoSpace.minTouch) }
-            .menuStyle(.borderlessButton).fixedSize()
-            .accessibilityLabel("待办操作")
+            .padding(.horizontal, MovoSpace.s).padding(.vertical, 6)
         }
-        .padding(.horizontal, MovoSpace.s).padding(.vertical, 6)
     }
 
     private func metadata(_ node: TodoNode, parentTitle: String?) -> String {

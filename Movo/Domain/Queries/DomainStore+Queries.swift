@@ -372,7 +372,7 @@ public extension DomainStore {
         return DependencyPolicy.blockerTitles(for: task, planTasks: siblings, tombstoned: tombstoned)
     }
 
-    public func getOrganizeHistory() async -> [OrganizeRecord] {
+    func getOrganizeHistory() async -> [OrganizeRecord] {
         await organizeHistory()
     }
 }

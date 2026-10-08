@@ -23,7 +23,8 @@ import AppKit
 
 public struct ExportPreviewScreen: View {
     @Environment(AppEnvironment.self) private var env
-    @Environment(\.movoRouter) private var router
+    /// 关闭本页：从计划详情进入时是浮层，从设置进入时在导航栈上。
+    @Environment(\.dismiss) private var dismiss
 
     /// nil = 导出全部计划
     let planID: UUID?
@@ -87,7 +88,7 @@ public struct ExportPreviewScreen: View {
         ScreenScroll {
             ScreenChrome(title, subtitle: subtitle) {
                 #if !os(macOS)
-                MovoIconButton("xmark", label: "关闭") { router.dismissSheet() }
+                MovoIconButton("xmark", label: "关闭") { dismiss() }
                 #endif
             }
 

@@ -12,6 +12,7 @@
 import XCTest
 import MovoKit
 
+@MainActor
 final class StatTests: XCTestCase {
 
     private let tzID = "Asia/Shanghai"
@@ -19,6 +20,13 @@ final class StatTests: XCTestCase {
 
     private func day(_ y: Int, _ m: Int, _ d: Int) -> DateOnly {
         DateOnly(y: y, m: m, d: d, sourceTZ: tzID)
+    }
+
+    private func makeStore(repository: InMemoryRepository, today: DateOnly) -> DomainStore {
+        DomainStore(repository: repository, clock: TravelClock(today.noon),
+                    timeZoneProvider: FixedTimeZoneProvider(identifier: tzID),
+                    deviceIDProvider: FixedDeviceIDProvider("stat-test"),
+                    defaults: .fallback)
     }
 
     // MARK: - 口径验证
@@ -46,25 +54,26 @@ final class StatTests: XCTestCase {
 
     // MARK: - 计划详情阶段分段与时间线查询
 
-    func testPlanDetailStageSegmentsAndTimeline() async {
+    func testPlanDetailStageSegmentsAndTimeline() async throws {
         let repo = InMemoryRepository()
-        let clock = TravelClock(now: Date(), today: day(2026, 10, 5), timeZone: tz)
-        let store = DomainStore(repository: repo, clock: clock)
+        let store = makeStore(repository: repo, today: day(2026, 10, 5))
 
         // 创建计划
         let plan = Plan(id: UUID(), name: "年终总结", kind: .delivery, category: .work,
                         startAt: .day(day(2026, 10, 1)), endAt: .day(day(2026, 10, 31)))
-        await repo.savePlan(plan)
+        try await repo.upsert(plan)
 
-        // 创建阶段
-        let stage1 = Stage(id: UUID(), planId: plan.id, name: "收集材料", sortIndex: 0,
-                           startAt: .day(day(2026, 10, 1)), endAt: .day(day(2026, 10, 15)))
-        let stage2 = Stage(id: UUID(), planId: plan.id, name: "成稿修改", sortIndex: 1,
-                           startAt: .day(day(2026, 10, 16)), endAt: .day(day(2026, 10, 31)))
-        await repo.saveStage(stage1)
-        await repo.saveStage(stage2)
+        // 创建阶段（sortIndex 在时间与状态之后声明）
+        let stage1 = Stage(id: UUID(), planId: plan.id, name: "收集材料",
+                           startAt: .day(day(2026, 10, 1)), endAt: .day(day(2026, 10, 15)),
+                           sortIndex: 0)
+        let stage2 = Stage(id: UUID(), planId: plan.id, name: "成稿修改",
+                           startAt: .day(day(2026, 10, 16)), endAt: .day(day(2026, 10, 31)),
+                           sortIndex: 1)
+        try await repo.upsert(stage1)
+        try await repo.upsert(stage2)
 
-        // 创建任务（阶段1：2个，完成1个；阶段2：1个未完成；未挂阶段：1个已完成）
+        // 创建任务（阶段1：2个，完成1个；阶段2：1个未完成；未挂阶段：1个未完成）
         let t1 = Task(id: UUID(), planId: plan.id, stageId: stage1.id, title: "拉取数据", status: .done,
                       startAt: .day(day(2026, 10, 2)), endAt: .day(day(2026, 10, 5)))
         let t2 = Task(id: UUID(), planId: plan.id, stageId: stage1.id, title: "整理图表", status: .todo,
@@ -73,10 +82,10 @@ final class StatTests: XCTestCase {
                       startAt: .day(day(2026, 10, 16)), endAt: .day(day(2026, 10, 25)))
         let tUnscheduled = Task(id: UUID(), planId: plan.id, stageId: nil, title: "独立待排期项", status: .todo)
 
-        await repo.saveTask(t1)
-        await repo.saveTask(t2)
-        await repo.saveTask(t3)
-        await repo.saveTask(tUnscheduled)
+        try await repo.upsert(t1)
+        try await repo.upsert(t2)
+        try await repo.upsert(t3)
+        try await repo.upsert(tUnscheduled)
 
         // 验证 PlanDetail
         guard let detail = await store.planDetail(plan.id) else {
@@ -92,13 +101,15 @@ final class StatTests: XCTestCase {
         let segUnassigned = detail.stageSegments.first { $0.stageId == nil }
         XCTAssertEqual(segUnassigned?.total, 1)
 
-        // 验证 PlanTimeline
-        guard let timeline = await store.planTimeline(plan.id) else {
+        // 验证时间线跨度视图（计划自身 + 阶段 + 排期任务）
+        guard let timeline = await store.planTimelineView(plan.id) else {
             XCTFail("应当能生成时间线视图")
             return
         }
 
-        XCTAssertEqual(timeline.spans.count, 4, "计划自身 + 2个阶段 + 3个排期任务中合规项")
+        XCTAssertEqual(timeline.spans.count, 6, "计划自身 + 2个阶段 + 3个排期任务")
+        XCTAssertEqual(timeline.spans.filter { $0.kind == .task }.count, 3)
+        XCTAssertFalse(timeline.spans.contains { $0.isOutRange }, "子级时间都落在父级范围内")
         XCTAssertEqual(timeline.unscheduledTasks.count, 1, "包含1个未排期任务")
         XCTAssertEqual(timeline.unscheduledTasks.first?.title, "独立待排期项")
         XCTAssertEqual(timeline.minDate, day(2026, 10, 1))
@@ -107,27 +118,27 @@ final class StatTests: XCTestCase {
 
     // MARK: - 回顾聚合（7天行动分布与分类占比）
 
-    func testReviewViewDailyActionsAndCategoryDistribution() async {
+    func testReviewViewDailyActionsAndCategoryDistribution() async throws {
         let repo = InMemoryRepository()
         let monday = day(2026, 10, 5) // 周一
-        let clock = TravelClock(now: monday.startOfDay(in: tz), today: monday, timeZone: tz)
-        let store = DomainStore(repository: repo, clock: clock)
+        let store = makeStore(repository: repo, today: monday)
 
         // 创建不同分类的计划
         let planWork = Plan(id: UUID(), name: "工作计划", kind: .delivery, category: .work)
         let planStudy = Plan(id: UUID(), name: "学习计划", kind: .maintenance, category: .study)
-        await repo.savePlan(planWork)
-        await repo.savePlan(planStudy)
+        try await repo.upsert(planWork)
+        try await repo.upsert(planStudy)
 
         // 记录行动：周一工作 2 条，周三学习 1 条
         let act1 = ActionRecord(id: UUID(), planId: planWork.id, happenedAt: .precise(monday.noon))
-        let act2 = ActionRecord(id: UUID(), planId: planWork.id, happenedAt: .precise(monday.noon.addingTimeInterval(3600)))
+        let act2 = ActionRecord(id: UUID(), planId: planWork.id,
+                                happenedAt: .precise(monday.noon.addingTimeInterval(3600)))
         let wednesday = monday.adding(days: 2)
         let act3 = ActionRecord(id: UUID(), planId: planStudy.id, happenedAt: .precise(wednesday.noon))
 
-        await repo.saveActivity(act1)
-        await repo.saveActivity(act2)
-        await repo.saveActivity(act3)
+        try await repo.upsert(act1)
+        try await repo.upsert(act2)
+        try await repo.upsert(act3)
 
         let review = await store.reviewView(weekStart: monday)
 
@@ -157,18 +168,17 @@ final class StatTests: XCTestCase {
 
     // MARK: - 重复任务离散序列展示
 
-    func testTaskDetailOccurrenceStrip() async {
+    func testTaskDetailOccurrenceStrip() async throws {
         let repo = InMemoryRepository()
         let today = day(2026, 10, 5)
-        let clock = TravelClock(now: today.noon, today: today, timeZone: tz)
-        let store = DomainStore(repository: repo, clock: clock)
+        let store = makeStore(repository: repo, today: today)
 
         let taskID = UUID()
         let task = Task(id: taskID, title: "晨跑", isTemplate: true)
-        await repo.saveTask(task)
+        try await repo.upsert(task)
 
         let rule = RecurrenceRule(id: UUID(), taskId: taskID, pattern: .daily, effectiveFrom: day(2026, 10, 1))
-        await repo.saveRule(rule)
+        try await repo.upsert(rule)
 
         // 生成三次实例：昨天已完成、前天已跳过、大前天未记录
         let occ1 = RecurrenceOccurrence(
@@ -181,9 +191,9 @@ final class StatTests: XCTestCase {
             id: UUID(), ruleId: rule.id, taskId: taskID,
             scheduledOn: day(2026, 10, 2), status: .pending)
 
-        await repo.saveOccurrence(occ1)
-        await repo.saveOccurrence(occ2)
-        await repo.saveOccurrence(occ3)
+        try await repo.upsert(occ1)
+        try await repo.upsert(occ2)
+        try await repo.upsert(occ3)
 
         guard let detail = await store.taskDetail(taskID) else {
             XCTFail("应当能获取任务详情")

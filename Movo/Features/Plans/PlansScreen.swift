@@ -52,8 +52,9 @@ public struct PlansScreen: View {
                 MovoBanner(error: error) { _ in env.lastError = nil }
             }
         }
-        .task { await reload() }
-        .onChange(of: showArchived) { _, _ in _Concurrency.Task { await reload() } }
+        // 新建/编辑计划是浮层，关闭后本页不会重建：跟随 dataVersion 重新读取，
+        // 刚建立的计划才会立刻出现在列表里（与今日、计划详情一致）。
+        .task(id: "\(showArchived)-\(env.store.dataVersion)") { await reload() }
     }
 
     private var badge: String {

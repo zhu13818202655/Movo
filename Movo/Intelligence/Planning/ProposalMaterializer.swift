@@ -91,9 +91,27 @@ public extension ProposalValidator {
                         sortIndex: idx))
                 }
 
+                // 子任务未声明阶段时继承父任务所在阶段（同一子树保持计划与阶段一致）。
+                var stageByRef: [String: UUID] = [:]
+                for task in plan.tasks {
+                    guard let ref = task.ref else { continue }
+                    stageByRef[ref] = resolveUUID(task.stageRef) ?? resolveUUID(task.stageId)
+                }
+                for _ in 0..<max(1, plan.tasks.count) {
+                    var changed = false
+                    for task in plan.tasks {
+                        guard let ref = task.ref, stageByRef[ref] == nil,
+                              let parentRef = task.parentRef, let inherited = stageByRef[parentRef] else { continue }
+                        stageByRef[ref] = inherited
+                        changed = true
+                    }
+                    if !changed { break }
+                }
+
                 for task in plan.tasks {
                     let taskID = task.ref.flatMap { refToID[$0] } ?? UUID()
                     let stageID = resolveUUID(task.stageRef) ?? resolveUUID(task.stageId)
+                        ?? task.ref.flatMap { stageByRef[$0] }
                     let parentID = resolveUUID(task.parentRef) ?? resolveUUID(task.parentTaskId)
                     var start = task.startAt.flatMap { TimePoint.parse($0, fallbackTZ: timeZone) }
                     if let s = start, s.dateOnly < today { start = .day(today) }
@@ -364,5 +382,4 @@ public extension ProposalValidator {
 
         return out
     }
-}
 }

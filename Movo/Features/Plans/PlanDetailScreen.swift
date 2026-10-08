@@ -467,7 +467,7 @@ public struct PlanDetailScreen: View {
 
     private func reload() async {
         detail = await env.store.planDetail(planID)
-        timelineView = await env.store.planTimeline(planID)
+        timelineView = await env.store.planTimelineView(planID)
         activities = (await env.store.repository.activities(planID: planID))
             .sorted { $0.happenedAt.sortEpoch > $1.happenedAt.sortEpoch }
         // 默认展开当前阶段

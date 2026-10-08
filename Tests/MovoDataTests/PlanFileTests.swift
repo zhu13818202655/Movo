@@ -94,11 +94,13 @@ final class PlanFileTests: XCTestCase {
         let rules = await repo.rules()
         let titles = Dictionary(tasks.map { ($0.id, $0.title) }, uniquingKeysWith: { a, _ in a })
         var lines: [String] = []
+        var stageNames: [UUID: String] = [:]
         for plan in plans {
             lines.append("plan|\(plan.name)|\(plan.kind.rawValue)|\(plan.category?.rawValue ?? "-")|"
                          + "\(plan.goalText ?? "-")|\(plan.startAt?.iso8601String ?? "-")|"
                          + "\(plan.endAt?.iso8601String ?? "-")|\(plan.aliases.joined(separator: ","))")
             for stage in await repo.stages(planID: plan.id) {
+                stageNames[stage.id] = stage.name
                 lines.append("stage|\(plan.name)|\(stage.name)|\(stage.criteriaText ?? "-")|"
                              + "\(stage.startAt?.iso8601String ?? "-")|\(stage.endAt?.iso8601String ?? "-")")
             }
@@ -119,7 +121,8 @@ final class PlanFileTests: XCTestCase {
             let deps = task.dependencyIDs.compactMap { titles[$0] }.sorted().joined(separator: ",")
             let planName = task.planId.flatMap { planNames[$0] } ?? "-"
             let parentTitle = task.parentId.flatMap { titles[$0] } ?? "-"
-            lines.append("task|\(task.title)|plan=\(planName)|parent=\(parentTitle)|"
+            let stageName = task.stageId.flatMap { stageNames[$0] } ?? "-"
+            lines.append("task|\(task.title)|plan=\(planName)|parent=\(parentTitle)|stage=\(stageName)|"
                          + "template=\(task.isTemplate)|step=\(task.isStep)|"
                          + "\(task.startAt?.iso8601String ?? "-")|\(task.endAt?.iso8601String ?? "-")|"
                          + "\(task.estimateMinutes ?? -1)|\(task.priority?.rawValue ?? "-")|"
@@ -150,6 +153,27 @@ final class PlanFileTests: XCTestCase {
         let before = await snapshot(source)
         let after = await snapshot(target)
         XCTAssertEqual(before, after)
+    }
+
+    /// 导出把顶层任务的阶段写回 `stage`（与文件里阶段条目的 id 一致）；
+    /// 子任务跟随上级，不重复写；没有阶段的任务不写。
+    func testExportWritesStageOnTopLevelTasksOnly() async throws {
+        let store = makeStore()
+        try await seed(store)
+        let file = try await exportFile(store)
+
+        let planFile = try XCTUnwrap(file.plans?.first)
+        let stageID = try XCTUnwrap(planFile.stages?.first?.id)
+        let roots = try XCTUnwrap(planFile.tasks)
+
+        let root = try XCTUnwrap(roots.first { $0.title == "准备" })
+        XCTAssertEqual(root.stage, stageID)
+
+        let child = try XCTUnwrap(root.children?.first { $0.title == "选教材" })
+        XCTAssertNil(child.stage)
+
+        let template = try XCTUnwrap(roots.first { $0.title == "背单词" })
+        XCTAssertNil(template.stage)
     }
 
     func testImportCanBeUndoneAsOneBatch() async throws {

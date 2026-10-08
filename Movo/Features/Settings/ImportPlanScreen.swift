@@ -18,7 +18,8 @@ import UniformTypeIdentifiers
 
 public struct ImportPlanScreen: View {
     @Environment(AppEnvironment.self) private var env
-    @Environment(\.movoRouter) private var router
+    /// 关闭本页：本页从设置里被压入导航栈，也可能作为 `.importPlan` 浮层出现。
+    @Environment(\.dismiss) private var dismiss
 
     @State private var showPicker = false
     @State private var fileName: String?
@@ -42,7 +43,7 @@ public struct ImportPlanScreen: View {
         ScreenScroll {
             ScreenChrome("导入 Movo 文件", subtitle: "读取 .movo.json，先预览再写入") {
                 #if !os(macOS)
-                MovoIconButton("xmark", label: "关闭") { router.dismissSheet() }
+                MovoIconButton("xmark", label: "关闭") { dismiss() }
                 #endif
             }
 

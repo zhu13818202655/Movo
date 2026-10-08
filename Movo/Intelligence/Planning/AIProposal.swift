@@ -272,16 +272,6 @@ public struct AIProposalItem: Sendable, Hashable, Codable {
         }
     }
 }
-            return ["measurement"]
-        case .saveNote:
-            return ["note"]
-        case .setRecurrence:
-            return ["task", "recurrence"]
-        case .needsClarification:
-            return []
-        }
-    }
-}
 
 // MARK: - 提案
 

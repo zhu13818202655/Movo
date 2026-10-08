@@ -130,9 +130,9 @@ final class NotificationPlannerTests: XCTestCase {
         let now = makeDate(y: 2026, m: 10, d: 8, h: 7, min: 0)
         let templateTask = Task(title: "晨间跑步", isTemplate: true)
         let rule = RecurrenceRule(id: UUID(), taskId: templateTask.id, pattern: .daily,
+                                  effectiveFrom: today,
                                   dailyStart: TimeOfDay(hour: 7, minute: 30),
-                                  dailyEnd: TimeOfDay(hour: 8, minute: 0),
-                                  effectiveFrom: today)
+                                  dailyEnd: TimeOfDay(hour: 8, minute: 0))
 
         let occurrence = RecurrenceOccurrence(ruleId: rule.id, taskId: templateTask.id,
                                               scheduledOn: today, status: .pending)
@@ -179,7 +179,8 @@ final class NotificationPlannerTests: XCTestCase {
 
         let doneTask = Task(title: "已完成", status: .done, startAt: .day(today))
         let cancelledTask = Task(title: "已取消", status: .cancelled, startAt: .day(today))
-        let archivedPlanTask = Task(title: "归档计划里的任务", planId: planID, status: .todo, startAt: .day(today))
+        let archivedPlanTask = Task(planId: planID, title: "归档计划里的任务", status: .todo,
+                                    startAt: .day(today))
 
         let defaults = makeDefaults()
         let planned = NotificationPlanner.plan(tasks: [doneTask, cancelledTask, archivedPlanTask],

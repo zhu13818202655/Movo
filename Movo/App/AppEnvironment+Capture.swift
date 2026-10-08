@@ -100,7 +100,8 @@ public extension AppEnvironment {
                                       today: store.today, timeZone: store.currentTimeZone, deviceId: store.deviceId,
                                       source: capture.inputMode == .voice ? .voice : .text, plans: plans,
                                       stagesByPlan: stages, metricsByPlan: metrics, tasksByPlan: tasksByPlan,
-                                      occurrencesByTask: occurrences, preferredPlanID: selectedPlan)
+                                      occurrencesByTask: occurrences, preferredPlanID: selectedPlan,
+                                      globalAIEnabled: globalAIEnabled)
         let target = vendor ?? self.vendor
         var preparation: ProposalPreparation
         if let proposal = savedProposals[captureID] {

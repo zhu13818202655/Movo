@@ -5,6 +5,9 @@
 //  12.2 固定 fixture 数据。与 docs/UI-Prompt.md「统一示例数据」逐字一致：
 //  日期固定 2026-09-28（周一）；工作计划 3/7 完成；健康散步 0/3 与体重 68.7 分开。
 //
+//  仅供建页预览（#Preview）与测试引用稳定 ID 和基准日期；应用内没有装载入口，
+//  生产启动（AppEnvironment.live）永远是空库，不要把 seed 接回任何用户可达路径。
+//
 
 import Foundation
 
@@ -77,7 +80,8 @@ public enum DemoFixtures {
 
     // MARK: - 装载
 
-    /// 把统一示例数据写入仓库。幂等：重复调用会覆盖同 ID 实体。
+    /// 把统一示例数据写入仓库。仅供预览与测试显式调用；应用内没有调用点。
+    /// 幂等：重复调用会覆盖同 ID 实体。
     public static func seed(into store: DomainStore) async throws {
         let now = referenceDate
 
@@ -91,12 +95,6 @@ public enum DemoFixtures {
             id: IDs.buyMilk, planId: nil, title: "买牛奶", status: .todo,
             startAt: .day(today), source: .manual,
             createdAt: now, updatedAt: now))
-    }
-
-    public static func seedIfEmpty(into store: DomainStore) async throws {
-        let existing = await store.repository.allPlans()
-        guard existing.isEmpty else { return }
-        try await seed(into: store)
     }
 
     // MARK: - 季度工作汇报

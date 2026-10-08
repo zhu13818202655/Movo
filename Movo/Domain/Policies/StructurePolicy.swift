@@ -268,6 +268,13 @@ public enum StructurePolicy {
         }
     }
 
+    public static func validateStageName(_ name: String) throws {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            throw MovoError.invalidStructure(reason: "阶段需要一个名称。")
+        }
+    }
+
     public static func validateMetricUnit(_ unit: String) throws {
         if unit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             throw MovoError.invalidStructure(reason: "结果指标需要一个单位，例如公斤或分钟。")
@@ -328,7 +335,7 @@ public enum StructurePolicy {
     }
 
     /// 超出父级范围时返回原因文案，否则返回 nil。
-    static func withinViolation(startAt: TimePoint?, endAt: TimePoint?,
+    public static func withinViolation(startAt: TimePoint?, endAt: TimePoint?,
                                 parentStart: TimePoint?, parentEnd: TimePoint?,
                                 child: String, parent: String) -> String? {
         let reason = "\(child)的时间超出了\(parent)的范围，请先调整时间。"

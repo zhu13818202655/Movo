@@ -207,8 +207,8 @@ final class FieldMergeTests: XCTestCase {
           "isTemplate": false,
           "status": "todo",
           "scheduledDate": {"y": 2026, "m": 10, "d": 8, "sourceTZ": "Asia/Shanghai"},
-          "timeHint": {"type": "exact", "hour": 14, "minute": 30},
-          "hardDeadline": {"epoch": 1800000000, "tzID": "Asia/Shanghai"},
+          "timeHint": {"exact": {"hour": 14, "minute": 30}},
+          "hardDeadline": {"epoch": "2027-01-15T08:00:00Z", "tzID": "Asia/Shanghai"},
           "tags": [],
           "dependencyIDs": [],
           "source": "manual",
@@ -243,6 +243,7 @@ final class FieldMergeTests: XCTestCase {
           "excludedTerms": [],
           "cloudAIEnabled": true,
           "syncEnabled": true,
+          "sortIndex": 0,
           "createdAt": "2026-09-28T10:00:00Z",
           "updatedAt": "2026-09-28T10:00:00Z",
           "revision": 1

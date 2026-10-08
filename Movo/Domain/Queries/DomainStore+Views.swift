@@ -390,7 +390,6 @@ public extension DomainStore {
                 skippedCount: period.skipped, unrecordedCount: period.unrecorded,
                 plannedCount: period.planned > 0 ? period.planned : nil,
                 metricChanges: trends, structuralEvents: structured,
-                isLocalOnly: false,
                 sourceSummary: "来自这一周的行动记录与结果",
                 activityIDs: planActivities.map(\.id)))
         }
@@ -417,7 +416,7 @@ public extension DomainStore {
         var categoryCounts: [PlanCategory?: Int] = [:]
         let planById = Dictionary(plans.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         for activity in weekActivities {
-            let cat = activity.planId.flatMap { planById[$0]?.category }
+            let cat = planById[activity.planId]?.category
             categoryCounts[cat, default: 0] += 1
         }
         let totalCount = weekActivities.count
@@ -441,7 +440,7 @@ public extension DomainStore {
 
     // MARK: - 时间线跨度视图
 
-    func planTimeline(_ planID: UUID) async -> PlanTimelineView? {
+    func planTimelineView(_ planID: UUID) async -> PlanTimelineView? {
         guard let plan = await repository.plan(planID) else { return nil }
         let deleted = Set(await repository.tombstones(activeOnly: true).map(\.entityId))
         let allTasks = await repository.tasks(planID: planID).filter { !deleted.contains($0.id) && !$0.isStep }
@@ -531,7 +530,6 @@ public extension DomainStore {
             unscheduledTasks: unscheduled,
             minDate: minDate,
             maxDate: maxDate)
-    }
     }
 
     // MARK: - AI 整理记录

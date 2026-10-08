@@ -21,7 +21,8 @@ public struct Plan: Identifiable, Hashable, Sendable, Codable {
     public var aliases: [String]
     public var contextPhrases: [String]
     public var excludedTerms: [String]
-    /// 允许云 AI。工作/学习/生活默认 true；健康及用户标记敏感默认 false（PRD 11.2）
+    /// 分类默认值的记录：工作/学习/生活默认 true，健康默认 false，未分类兜底 true（PRD 11.2）。
+    /// **不参与判定**：是否把内容发给模型只由全局 AI 开关决定；本字段仅随实体同步与展示。
     public var cloudAIEnabled: Bool
     /// 是否同步 iCloud，默认 true（可逐计划关闭）
     public var syncEnabled: Bool
@@ -119,8 +120,6 @@ public struct Plan: Identifiable, Hashable, Sendable, Codable {
         if let resumedAt, day >= resumedAt { return false }
         return true
     }
-
-    public var isSensitiveByDefault: Bool { category == .health || !cloudAIEnabled }
 
     /// 归类信号（6.3）：名称 + 别名 + 常用表达
     public var classificationSignals: [String] {

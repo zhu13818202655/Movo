@@ -56,7 +56,9 @@
 ├── .gitignore                 ← 忽略构建产物与生成的工程（见下）
 ├── Movo/                      ← 全部源码（下文展开）
 ├── Tests/                     ← 单元测试，5 个 target，独立于 Movo/ 之外
-├── Scripts/verify.sh          ← 一键构建 + 全量测试脚本
+├── Scripts/
+│   ├── verify.sh              ← 一键构建 + 全量测试脚本
+│   └── generate-app-icons.py  ← 重新生成 App 图标（仅改图标外观时才需要）
 ├── docs/                      ← PRD、开发概述、设计稿
 │   ├── PRD.md
 │   ├── AI-Todo-Pipeline.md    ← AI 构建待办流程
@@ -120,7 +122,7 @@ Movo/
 │   ├── Queries/                      只读视图（页面只读这里）
 │   ├── Policies/                     业务规则：结构约束 / 重复规则 / 进度口径 / 依赖
 │   ├── Repository/                   DomainRepository.swift（仓储协议，不依赖 SwiftData）
-│   ├── Support/                      Clock/TimeZone 注入、DemoFixtures（演示数据）
+│   ├── Support/                      Clock/TimeZone 注入、DemoFixtures（预览/测试 fixture）
 │   ├── Support.swift                 ConfigLoader（读 Config/*.json 的入口）
 │   └── MovoError.swift               错误模型（每个 case 绑定固定文案）
 │
@@ -170,6 +172,8 @@ Movo/
 │   ├── Movo-iOS.entitlements         [签名][iCloud] iOS 权限声明
 │   └── Movo-macOS.entitlements       [签名][iCloud] macOS 权限声明
 └── Assets.xcassets/                  图标与强调色
+    ├── AccentColor.colorset/         强调色（对应 MovoColor.primary）
+    └── AppIcon.appiconset/           App 图标：iOS 1024 + macOS 16–512 全尺寸
 ```
 
 ### 1.5 分层与依赖方向
@@ -222,7 +226,7 @@ Movo/
 | `Domain/Policies/DependencyPolicy.swift` | 依赖状态派生（只提示不阻断） |
 | `Domain/Queries/*.swift` | 页面用的只读视图类型与查询实现 |
 | `Domain/Support.swift` | `ConfigLoader`（读 `Config/*.json`）、可注入时钟 |
-| `Domain/Support/DemoFixtures.swift` | 首次启动装载的演示数据 |
+| `Domain/Support/DemoFixtures.swift` | 预览与测试用的固定 fixture；应用内没有装载入口，生产启动永远是空库 |
 
 > **时间旅行**：`Domain/Support.swift` 提供可注入的 Clock。测试里用 `TravelClock` 锁定"今天"，因此 `DemoFixtures` 的日期固定在 2026-09-28。
 
@@ -256,10 +260,10 @@ Movo/
 | `Intelligence/Providers/AIProviderResolver.swift` | 把厂商与配置解析为端点/模型；自定义厂商未配全时抛 `providerNotConfigured` | **[大模型]** |
 | `Intelligence/Providers/AISettingsStore.swift` | 厂商选择与自定义 Base URL／模型 ID 的本机持久化 | **[大模型]** |
 | `Intelligence/Providers/AITransport.swift` | 超时（单次等待 60s / 总 120s）、重试、取消 | **[大模型]** |
-| `Intelligence/Planning/ProposalService.swift` | 主流水线 C2→C7：原文原样发送，先预览后落盘 | **[大模型]** |
+| `Intelligence/Planning/ProposalService.swift` | 主流水线 C2→C7：原文原样发送，先预览后落盘；`ProposalRequest.globalAIEnabled` 为 false 时不触达任何 provider | **[大模型]** |
 | `Intelligence/Planning/AIProposal.swift` | 模型输出契约（JSON Schema） | |
-| `Intelligence/Planning/ProposalValidator.swift` | 校验清单：批内引用（ref）、起止时间与步骤约束解析 | |
-| `Intelligence/Planning/ProposalMaterializer.swift` | 确认后把待确认项按依赖拓扑物化为原子批次命令 | |
+| `Intelligence/Planning/ProposalValidator.swift` | 校验清单：批内引用（ref）、直接写的 `stage_id` / `parent_task_id` 必须真实存在、重复行动不得挂在任何待办下、起止时间与步骤约束解析 | |
+| `Intelligence/Planning/ProposalMaterializer.swift` | 确认后把待确认项按依赖拓扑物化为原子批次命令；子任务未声明阶段时继承父任务所在阶段（同一子树计划与阶段一致） | |
 | `Intelligence/Privacy/ContextBuilder.swift` | 上下文构建：未归档计划、全部阶段、任务树、重复模板 | **[大模型]** |
 | `Intelligence/Speech/SpeechTranscriptionService.swift` | 本机语音转写 | **[语音]** |
 | `Intelligence/Support/RedactedLogger.swift` | 日志脱敏（只记元数据，不记正文/Key） | **[大模型]** |
@@ -472,6 +476,27 @@ swift-plugin-server produced malformed response
 ```
 
 这是沙箱拦截导致的，**不是代码问题**。**VS Code 的内置终端不受影响**，直接在里面跑即可。
+
+### 3.7 App 图标
+
+图标位图已入库，位于 `Movo/Assets.xcassets/AppIcon.appiconset/`，日常构建不需要做任何额外操作。
+
+两端规则不同，改图时注意：
+
+| 平台 | 提供内容 | 尺寸/圆角 |
+|---|---|---|
+| iOS | 单一 1024，默认 + 深色 + 着色三种外观 | 满幅正方形、不透明无 alpha，圆角由系统遮罩裁切 |
+| macOS | 16–512 全尺寸（10 个槽位） | 1024 画布内主体 824×824，左右留白 100、上 90 / 下 110；超椭圆圆角；四周透明留白用于容纳系统投影 |
+
+macOS 图标**不会**被系统裁切圆角，必须自行绘制主体与投影，否则在 Dock / 访达里会是一个硬边方块。
+
+重新生成（仅调整图标外观时才需要）：
+
+```bash
+python3 Scripts/generate-app-icons.py
+```
+
+脚本依赖 Python 3 + Pillow，会同时重写 `Contents.json` 与全部位图，**不要手工编辑该目录**。Pillow 只服务于这个脚本，应用本身没有 Python 依赖。
 
 ---
 
