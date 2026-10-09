@@ -408,6 +408,14 @@ public enum ProposalValidator {
                         taskIssues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
                                                         reasons: [.structureViolation("待办时间晚于计划结束时间")]))
                     }
+                    // 计划里的重复待办同样要过窗口/时刻校验：日期写错时宁可让用户改，
+                    // 也不能静默丢掉「到某天为止」，否则会变成无限期重复。
+                    if let rec = task.recurrence, rec.pattern != nil,
+                       let reason = Self.recurrenceFieldIssue(rec, timeZone: timeZone) {
+                        taskIssues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                        reasons: [.structureViolation(reason)]))
+                        continue
+                    }
                 }
                 guard taskIssues.isEmpty else { issues += taskIssues; continue }
 
@@ -419,8 +427,11 @@ public enum ProposalValidator {
                     lines.append(.init(entityId: UUID(), title: "包含阶段", changeText: stage.name))
                 }
                 lines += plan.tasks.map { task in
-                    let details = [task.startAt.map { "开始 \($0)" },
+                    var details = [task.startAt.map { "开始 \($0)" },
                                    task.endAt.map { "结束 \($0)" }, task.notes].compactMap { $0 }
+                    if let rec = task.recurrence, rec.pattern != nil {
+                        details.append(Self.recurrenceSummary(rec, timeZone: timeZone))
+                    }
                     return .init(entityId: UUID(), title: "新增：\(task.title ?? "")",
                                  changeText: details.isEmpty ? "未安排" : details.joined(separator: " · "))
                 }
@@ -493,6 +504,15 @@ public enum ProposalValidator {
                     }
                 }
 
+                // 频率/每天时刻/生效窗口写错的重复块不进待确认——直接进收件箱让用户改。
+                // 放在自动修正之前，避免「已把开始时间改为今天」这类说明挂在一个被拒的条目上。
+                if let rec = spec?.recurrence ?? item.recurrence, rec.pattern != nil,
+                   let reason = Self.recurrenceFieldIssue(rec, timeZone: timeZone) {
+                    issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                reasons: [.structureViolation(reason)]))
+                    continue
+                }
+
                 let parsedStart = Self.parseTime(spec?.startAt, timeZone: timeZone)
                 let parsedEnd = Self.parseTime(spec?.endAt, timeZone: timeZone)
                 guard parsedStart.isValid, parsedEnd.isValid else {
@@ -517,8 +537,10 @@ public enum ProposalValidator {
                                endAt.map { "结束 \($0.displayString)" }, spec?.notes].compactMap { $0 }
                 let subText = details.isEmpty ? "未安排时间" : details.joined(separator: " · ")
                 changeLines.append(ImpactPreview.ImpactLine(entityId: planID ?? UUID(), title: title, changeText: subText))
-                if let rec = spec?.recurrence ?? item.recurrence, let p = rec.pattern {
-                    changeLines.append(ImpactPreview.ImpactLine(entityId: UUID(), title: "重复", changeText: p))
+                if let rec = spec?.recurrence ?? item.recurrence, rec.pattern != nil {
+                    changeLines.append(ImpactPreview.ImpactLine(
+                        entityId: UUID(), title: "重复",
+                        changeText: Self.recurrenceSummary(rec, timeZone: timeZone)))
                 }
                 for step in (spec?.steps ?? []) {
                     changeLines.append(ImpactPreview.ImpactLine(entityId: UUID(), title: "步骤", changeText: step.title))
@@ -788,13 +810,19 @@ public enum ProposalValidator {
                                                 reasons: [.incompleteRecurrence]))
                     continue
                 }
-                let summary = pattern == .weeklyCount
-                    ? "每周 \(recurrence.count ?? 0) 次" : pattern.displayName
+                if let reason = Self.recurrenceFieldIssue(recurrence, timeZone: timeZone) {
+                    issues.append(ProposalIssue(itemID: item.id, sourceSpan: item.sourceSpan,
+                                                reasons: [.structureViolation(reason)]))
+                    continue
+                }
+                let summary = Self.recurrenceSummary(recurrence, timeZone: timeZone)
+                let tail = (recurrence.effectiveUntil?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+                    ? "，到期后不再重复" : "，只作用于生效日及以后"
                 needsConfirmation.append(PendingProposal(
                     id: item.id, item: item, affectedSummary: task.title,
                     changeSummary: [ImpactPreview.ImpactLine(
                         entityId: taskID, title: task.title,
-                        changeText: "重复频率调整为「\(summary)」，只作用于生效日及以后")],
+                        changeText: "重复频率调整为「\(summary)」\(tail)")],
                     kind: .recurrenceChange))
 
             // MARK: set_dependency
@@ -870,6 +898,85 @@ public enum ProposalValidator {
         guard let raw, !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return (nil, true) }
         guard let point = TimePoint.parse(raw, fallbackTZ: timeZone) else { return (nil, false) }
         return (point, true)
+    }
+
+    /// 把 AI 给出的重复块渲染成一句可读文案：「每天 06:30 · 10月9日–11月9日」。
+    /// 频率 / 每天时刻 / 生效窗口三段各自独立成段；解析不出来的部分不显示，
+    /// 免得把模型笔误当成真实约束展示给用户。
+    static func recurrenceSummary(_ rec: AIRecurrence, timeZone: TimeZone) -> String {
+        var parts: [String] = []
+
+        if let raw = rec.pattern, let pattern = RecurrencePattern(rawValue: raw) {
+            switch pattern {
+            case .daily:
+                parts.append("每天")
+            case .weekdays:
+                let names = ["一", "二", "三", "四", "五", "六", "日"]
+                let sorted = rec.weekdays.filter { (1...7).contains($0) }.sorted()
+                parts.append(sorted.isEmpty
+                    ? "指定星期"
+                    : "每周" + sorted.map { names[$0 - 1] }.joined(separator: "、"))
+            case .weeklyCount:
+                parts.append("每周 \(rec.count ?? 0) 次")
+            }
+        }
+
+        if let start = rec.resolvedDailyStart {
+            if let end = rec.resolvedDailyEnd {
+                parts.append("\(start.displayString)–\(end.displayString)")
+            } else {
+                parts.append(start.displayString)
+            }
+        }
+
+        let from = rec.effectiveFrom.flatMap {
+            DateOnly(iso8601DateString: dayPrefix($0), sourceTZ: timeZone.identifier)
+        }
+        let until = rec.effectiveUntil.flatMap {
+            DateOnly(iso8601DateString: dayPrefix($0), sourceTZ: timeZone.identifier)
+        }
+        switch (from, until) {
+        case let (f?, u?): parts.append("\(f.displayString)–\(u.displayString)")
+        case let (f?, nil): parts.append("\(f.displayString)起")
+        case let (nil, u?): parts.append("至\(u.displayString)")
+        case (nil, nil): break
+        }
+
+        return parts.isEmpty ? "重复" : parts.joined(separator: " · ")
+    }
+
+    /// 重复块的字段校验。返回 nil 表示通过，否则返回给用户看的原因。
+    /// 核心原则：**给了日期/时刻就必须能识别**——解析失败宁可让用户改，
+    /// 也不能静默降级成「无限期重复」或「整天没时刻」。
+    static func recurrenceFieldIssue(_ rec: AIRecurrence, timeZone: TimeZone) -> String? {
+        func isBlank(_ raw: String?) -> Bool {
+            (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        if !isBlank(rec.effectiveFrom),
+           DateOnly(iso8601DateString: dayPrefix(rec.effectiveFrom ?? ""),
+                    sourceTZ: timeZone.identifier) == nil {
+            return "重复的开始日期无法识别，请确认后重试。"
+        }
+        if !isBlank(rec.effectiveUntil),
+           DateOnly(iso8601DateString: dayPrefix(rec.effectiveUntil ?? ""),
+                    sourceTZ: timeZone.identifier) == nil {
+            return "重复的结束日期无法识别，请确认后重试。"
+        }
+        for (raw, label) in [(rec.dailyStart, "开始"), (rec.dailyEnd, "结束")] {
+            if !isBlank(raw), AIRecurrence.timeOfDay(from: raw) == nil {
+                return "重复的每次\(label)时刻无法识别，请确认后重试。"
+            }
+        }
+        if let from = rec.effectiveFrom.flatMap({
+               DateOnly(iso8601DateString: dayPrefix($0), sourceTZ: timeZone.identifier)
+           }),
+           let until = rec.effectiveUntil.flatMap({
+               DateOnly(iso8601DateString: dayPrefix($0), sourceTZ: timeZone.identifier)
+           }),
+           until < from {
+            return "重复的结束日期早于开始日期。"
+        }
+        return nil
     }
 
     /// 模型给的优先级字符串 → `TaskPriority.rawValue`

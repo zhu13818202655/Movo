@@ -86,6 +86,9 @@ public struct ChangeRecurrence: DomainCommand {
     public var weekdays: [Int]
     public var weeklyCount: Int?
     public var effectiveFrom: DateOnly
+    /// 为 true 时用 effectiveUntil 整体替换重复结束日期；否则保留原值
+    public var updatesEffectiveUntil: Bool
+    public var effectiveUntil: DateOnly?
     /// 为 true 时用 dailyStart/dailyEnd 整体替换每天时刻；否则保留原有时刻
     public var updatesDailyTimes: Bool
     public var dailyStart: TimeOfDay?
@@ -93,11 +96,13 @@ public struct ChangeRecurrence: DomainCommand {
 
     public init(operationID: UUID = UUID(), ruleID: UUID, pattern: RecurrencePattern,
                 weekdays: [Int] = [], weeklyCount: Int? = nil, effectiveFrom: DateOnly,
+                updatesEffectiveUntil: Bool = false, effectiveUntil: DateOnly? = nil,
                 updatesDailyTimes: Bool = false, dailyStart: TimeOfDay? = nil, dailyEnd: TimeOfDay? = nil,
                 baseRevision: Int = 0) {
         self.operationID = operationID; self.ruleID = ruleID; self.pattern = pattern
         self.weekdays = weekdays; self.weeklyCount = weeklyCount
         self.effectiveFrom = effectiveFrom; self.baseRevision = baseRevision
+        self.updatesEffectiveUntil = updatesEffectiveUntil; self.effectiveUntil = effectiveUntil
         self.updatesDailyTimes = updatesDailyTimes
         self.dailyStart = dailyStart; self.dailyEnd = dailyEnd
     }
@@ -113,6 +118,7 @@ public struct ChangeRecurrence: DomainCommand {
             weekdays: pattern == .weekdays ? weekdays : nil,
             weeklyCount: pattern == .weeklyCount ? weeklyCount : nil,
             effectiveFrom: effectiveFrom, today: context.today,
+            updatesEffectiveUntil: updatesEffectiveUntil, effectiveUntil: effectiveUntil,
             updatesDailyTimes: updatesDailyTimes, dailyStart: dailyStart, dailyEnd: dailyEnd)
         if let task = await context.repository.task(old.taskId) {
             try await StructurePolicy.validateRuleTime(updated, task: task, repository: context.repository)

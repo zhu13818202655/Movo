@@ -434,6 +434,15 @@ public struct RecurrenceRule: Identifiable, Hashable, Sendable, Codable {
         }
     }
 
+    /// 一眼看懂的完整频率描述：「每天 · 06:30 开始 · 到 11月9日」。
+    /// 模板行、频率编辑器与 AI 预览共用同一套文案，避免同一条规则在三处显示不一致。
+    public var scheduleDescription: String {
+        var parts = [ruleDescription]
+        if let time = dailyTimeDescription { parts.append(time) }
+        if let until = effectiveUntil { parts.append("到 \(until.displayString)") }
+        return parts.joined(separator: " · ")
+    }
+
     /// 某天实例的开始：规则带时刻时为「该日 + 时刻」，否则是这一天
     public func occurrenceStart(on day: DateOnly) -> TimePoint {
         guard let time = dailyStart,
@@ -986,6 +995,33 @@ public enum SyncState: Hashable, Sendable, Codable {
 
     public var pendingCount: Int { if case .syncing(let n) = self { return n }; return 0 }
     public var hasConflict: Bool { if case .conflictPending = self { return true }; return false }
+}
+
+/// 同步状态在「设置」入口（顶部齿轮）上的外显级别。
+///
+/// 设置是唯一入口，同步的细节都在设置页里；这一层只回答一个问题：
+/// 「有没有需要用户现在就知道的事」。正常状态一律返回 nil ——
+/// 顶部不该和设置页重复表达同一个状态，只有进行中与出问题两种才值得占一个角标。
+///
+/// 这里只做分类，图标与配色由视图层决定，因此可以脱离 UI 单测。
+public enum SyncAttention: String, Sendable, Hashable, CaseIterable {
+    /// 正在同步：进行中，不是问题
+    case activity
+    /// 同步失败或存在待确认冲突：需要用户处理
+    case issue
+
+    /// 正常状态（未登录 / 就绪 / 已同步）返回 nil。
+    ///
+    /// 「未登录 iCloud」也算正常：本应用本机优先，默认就不开 iCloud
+    /// （见 `Movo/project.yml` 的 `MovoICloudContainerID`），
+    /// 账号状态在设置页里说明即可，不必长期在顶部报警。
+    public init?(_ state: SyncState) {
+        switch state {
+        case .syncing: self = .activity
+        case .failed, .conflictPending: self = .issue
+        case .notSignedIn, .idle, .upToDate: return nil
+        }
+    }
 }
 
 // MARK: - 删除条目 / 收件箱

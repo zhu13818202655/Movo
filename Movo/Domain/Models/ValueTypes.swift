@@ -821,6 +821,16 @@ public enum TimePoint: Hashable, Sendable, Codable {
         return formatter.string(from: value.epoch)
     }
 
+    /// 某一时刻的钟点（按自带时区）；「某一天」返回 nil。
+    /// 用于把任务上的开始时刻转成重复规则里的「每天时刻」。
+    public var timeOfDay: TimeOfDay? {
+        guard case .instant(let value) = self else { return nil }
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = value.timeZone
+        let parts = cal.dateComponents([.hour, .minute, .second], from: value.epoch)
+        return TimeOfDay(hour: parts.hour ?? 0, minute: parts.minute ?? 0, second: parts.second ?? 0)
+    }
+
     /// 当天内的排序值（秒）：某一天排在所有时刻之后
     public var secondsOfDayForSorting: Int {
         guard case .instant(let value) = self else { return 86_400 }

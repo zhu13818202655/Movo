@@ -8,6 +8,15 @@
 
 import Foundation
 
+/// 重复块解析结果：规则草稿，以及用户明确给出的窗口端点。
+/// 窗口端点用来把模板任务自身的 startAt / endAt 对齐到同一个窗口，
+/// 避免出现「规则重复到 11月9日、任务的结束时间却空着」这类不一致。
+struct RecurrencePlan {
+    var draft: RecurrenceDraft
+    var explicitStart: DateOnly?
+    var explicitUntil: DateOnly?
+}
+
 public extension ProposalValidator {
 
     /// 批量物化用户确认的提案集合，解析批内临时引用并按依赖拓扑顺序输出命令。
@@ -60,14 +69,8 @@ public extension ProposalValidator {
         var stepCommands: [any DomainCommand] = []
         var otherCommands: [any DomainCommand] = []
 
-        func buildRecurrenceDraft(_ rec: AIRecurrence?) -> RecurrenceDraft? {
-            guard let rec, let pRaw = rec.pattern, let p = RecurrencePattern(rawValue: pRaw) else { return nil }
-            var from = today
-            if let rawFrom = rec.effectiveFrom,
-               let parsed = DateOnly(iso8601DateString: rawFrom, sourceTZ: timeZone.identifier),
-               parsed >= today { from = parsed }
-            return RecurrenceDraft(pattern: p, weekdays: rec.weekdays, weeklyCount: rec.count,
-                                   effectiveFrom: from)
+        func buildRecurrenceDraft(_ rec: AIRecurrence?, startAt: TimePoint?) -> RecurrencePlan? {
+            ProposalValidator.recurrencePlan(rec, startAt: startAt, today: today, timeZone: timeZone)
         }
 
         for pending in proposals {
@@ -115,18 +118,20 @@ public extension ProposalValidator {
                     let parentID = resolveUUID(task.parentRef) ?? resolveUUID(task.parentTaskId)
                     var start = task.startAt.flatMap { TimePoint.parse($0, fallbackTZ: timeZone) }
                     if let s = start, s.dateOnly < today { start = .day(today) }
-                    let recDraft = buildRecurrenceDraft(task.recurrence)
+                    let recPlan = buildRecurrenceDraft(task.recurrence, startAt: start)
+                    if start == nil, let explicitStart = recPlan?.explicitStart { start = .day(explicitStart) }
 
                     let cmd = CreateTask(
                         id: taskID, title: task.title ?? "", planID: planID,
                         stageID: stageID, parentID: parentID, notes: task.notes,
                         startAt: start,
-                        endAt: task.endAt.flatMap { TimePoint.parse($0, fallbackTZ: timeZone) },
+                        endAt: task.endAt.flatMap { TimePoint.parse($0, fallbackTZ: timeZone) }
+                            ?? recPlan?.explicitUntil.map { TimePoint.day($0) },
                         estimateMinutes: task.estimateMinutes,
                         priority: task.priority.flatMap { TaskPriority(rawValue: normalizePriority($0)) },
                         tags: task.tags,
                         dependencyIDs: task.dependencyIds.compactMap(resolveUUID),
-                        recurrence: recDraft, source: source, captureID: captureID)
+                        recurrence: recPlan?.draft, source: source, captureID: captureID)
                     taskItems.append((parentID, cmd, taskID))
 
                     // 步骤
@@ -150,18 +155,20 @@ public extension ProposalValidator {
                 let parentID = resolveUUID(spec.parentRef) ?? resolveUUID(spec.parentTaskId)
                 var start = spec.startAt.flatMap { TimePoint.parse($0, fallbackTZ: timeZone) }
                 if let s = start, s.dateOnly < today { start = .day(today) }
-                let recDraft = buildRecurrenceDraft(spec.recurrence ?? item.recurrence)
+                let recPlan = buildRecurrenceDraft(spec.recurrence ?? item.recurrence, startAt: start)
+                if start == nil, let explicitStart = recPlan?.explicitStart { start = .day(explicitStart) }
 
                 let cmd = CreateTask(
                     id: taskID, title: title, planID: planID,
                     stageID: stageID, parentID: parentID, notes: spec.notes,
                     startAt: start,
-                    endAt: spec.endAt.flatMap { TimePoint.parse($0, fallbackTZ: timeZone) },
+                    endAt: spec.endAt.flatMap { TimePoint.parse($0, fallbackTZ: timeZone) }
+                        ?? recPlan?.explicitUntil.map { TimePoint.day($0) },
                     estimateMinutes: spec.estimateMinutes,
                     priority: spec.priority.flatMap { TaskPriority(rawValue: normalizePriority($0)) },
                     tags: spec.tags,
                     dependencyIDs: spec.dependencyIds.compactMap(resolveUUID),
-                    recurrence: recDraft, source: source, captureID: captureID,
+                    recurrence: recPlan?.draft, source: source, captureID: captureID,
                     suggestedFields: suggestedFields(for: item, taskSpec: spec))
                 taskItems.append((parentID, cmd, taskID))
 
@@ -248,29 +255,27 @@ public extension ProposalValidator {
             for task in plan.tasks {
                 var start = task.startAt.flatMap { TimePoint.parse($0, fallbackTZ: timeZone) }
                 if let current = start, current.dateOnly < today { start = .day(today) }
+                let recPlan = Self.recurrencePlan(task.recurrence, startAt: start,
+                                                  today: today, timeZone: timeZone)
+                if start == nil, let explicitStart = recPlan?.explicitStart { start = .day(explicitStart) }
                 out.append(CreateTask(title: task.title ?? "", planID: planID, notes: task.notes,
                                       startAt: start,
-                                      endAt: task.endAt.flatMap { TimePoint.parse($0, fallbackTZ: timeZone) },
+                                      endAt: task.endAt.flatMap { TimePoint.parse($0, fallbackTZ: timeZone) }
+                                          ?? recPlan?.explicitUntil.map { TimePoint.day($0) },
                                       estimateMinutes: task.estimateMinutes,
                                       priority: task.priority.flatMap { TaskPriority(rawValue: normalizePriority($0)) },
-                                      tags: task.tags, source: source, captureID: captureID))
+                                      tags: task.tags, recurrence: recPlan?.draft,
+                                      source: source, captureID: captureID))
             }
 
         case .taskCreation, .classificationAmbiguous:
             guard let spec else { return [] }
             let title = (spec.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !title.isEmpty, title.count <= Task.maxTitleLength else { return [] }
-            let start = spec.startAt.flatMap { TimePoint.parse($0, fallbackTZ: timeZone) }
-            var recDraft: RecurrenceDraft?
-            if let rec = spec.recurrence ?? item.recurrence, let pRaw = rec.pattern,
-               let p = RecurrencePattern(rawValue: pRaw) {
-                var from = today
-                if let rawFrom = rec.effectiveFrom,
-                   let parsed = DateOnly(iso8601DateString: rawFrom, sourceTZ: timeZone.identifier),
-                   parsed >= today { from = parsed }
-                recDraft = RecurrenceDraft(pattern: p, weekdays: rec.weekdays, weeklyCount: rec.count,
-                                           effectiveFrom: from)
-            }
+            var start = spec.startAt.flatMap { TimePoint.parse($0, fallbackTZ: timeZone) }
+            let recPlan = Self.recurrencePlan(spec.recurrence ?? item.recurrence,
+                                              startAt: start, today: today, timeZone: timeZone)
+            if start == nil, let explicitStart = recPlan?.explicitStart { start = .day(explicitStart) }
             let taskID = UUID()
             out.append(CreateTask(
                 id: taskID,
@@ -280,12 +285,13 @@ public extension ProposalValidator {
                 parentID: uuid(spec.parentTaskId),
                 notes: spec.notes,
                 startAt: start,
-                endAt: spec.endAt.flatMap { TimePoint.parse($0, fallbackTZ: timeZone) },
+                endAt: spec.endAt.flatMap { TimePoint.parse($0, fallbackTZ: timeZone) }
+                    ?? recPlan?.explicitUntil.map { TimePoint.day($0) },
                 estimateMinutes: spec.estimateMinutes,
                 priority: spec.priority.flatMap { TaskPriority(rawValue: normalizePriority($0)) },
                 tags: spec.tags,
                 dependencyIDs: spec.dependencyIds.compactMap { UUID(uuidString: $0) },
-                recurrence: recDraft,
+                recurrence: recPlan?.draft,
                 source: source,
                 captureID: captureID,
                 suggestedFields: suggestedFields(for: item, taskSpec: spec)))
@@ -357,13 +363,18 @@ public extension ProposalValidator {
                   let rule = rules[candidateID], let rec = item.recurrence,
                   let patternRaw = rec.pattern,
                   let pattern = RecurrencePattern(rawValue: patternRaw) else { return [] }
-            var from = today
-            if let raw = rec.effectiveFrom,
-               let parsed = DateOnly(iso8601DateString: raw, sourceTZ: timeZone.identifier),
-               parsed >= today { from = parsed }
+            guard let plan = ProposalValidator.recurrencePlan(rec, startAt: nil,
+                                                              today: today, timeZone: timeZone) else { return [] }
             out.append(ChangeRecurrence(ruleID: rule.id, pattern: pattern,
                                         weekdays: rec.weekdays, weeklyCount: rec.count,
-                                        effectiveFrom: from, baseRevision: rule.revision))
+                                        effectiveFrom: plan.draft.effectiveFrom,
+                                        updatesEffectiveUntil: rec.effectiveUntil != nil,
+                                        effectiveUntil: plan.draft.effectiveUntil,
+                                        updatesDailyTimes: rec.resolvedDailyStart != nil
+                                            || rec.resolvedDailyEnd != nil,
+                                        dailyStart: plan.draft.dailyStart,
+                                        dailyEnd: plan.draft.dailyEnd,
+                                        baseRevision: rule.revision))
 
         case .measurementUnitUnclear:
             guard let spec = item.measurement, let metricID = uuid(spec.metricId),
@@ -381,5 +392,35 @@ public extension ProposalValidator {
         }
 
         return out
+    }
+
+    /// 把模型给出的重复块解析成规则草稿与窗口端点。
+    /// - Parameters:
+    ///   - startAt: 任务自身的开始时间点。模型经常把「早上 6:30」只写进 `start_at`，
+    ///     这里当作每天时刻的兜底来源，否则规则会丢掉时刻（实例没有钟点、也不产生定点提醒）。
+    /// 只在模块内使用（`RecurrencePlan` 是内部类型），因此显式标 `internal`。
+    internal static func recurrencePlan(_ rec: AIRecurrence?, startAt: TimePoint?,
+                                        today: DateOnly, timeZone: TimeZone) -> RecurrencePlan? {
+        guard let rec, let pRaw = rec.pattern, let p = RecurrencePattern(rawValue: pRaw) else { return nil }
+        // 与 `recurrenceFieldIssue` 用同一套「取日期前缀」的解析口径，
+        // 免得校验通过、这里却因为模型多带了时刻而静默丢窗口。
+        var explicitStart: DateOnly?
+        if let rawFrom = rec.effectiveFrom,
+           let parsed = DateOnly(iso8601DateString: dayPrefix(rawFrom), sourceTZ: timeZone.identifier) {
+            explicitStart = parsed
+        }
+        let from = max(explicitStart ?? today, today)
+        var until: DateOnly?
+        if let rawUntil = rec.effectiveUntil,
+           let parsed = DateOnly(iso8601DateString: dayPrefix(rawUntil), sourceTZ: timeZone.identifier) {
+            until = parsed
+        }
+        // 结束日不能早于生效日；早于时保留生效日当天，避免规则永不生效。
+        if let value = until, value < from { until = from }
+        let draft = RecurrenceDraft(pattern: p, weekdays: rec.weekdays, weeklyCount: rec.count,
+                                   effectiveFrom: from, effectiveUntil: until,
+                                   dailyStart: rec.resolvedDailyStart ?? startAt?.timeOfDay,
+                                   dailyEnd: rec.resolvedDailyEnd)
+        return RecurrencePlan(draft: draft, explicitStart: explicitStart, explicitUntil: until)
     }
 }

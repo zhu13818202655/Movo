@@ -649,14 +649,31 @@ struct ManageSettingsView: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
 
-        MovoFormSection("语音权限") {
+        MovoFormSection("语音权限", footnote: "语音在本机转写，音频与转写都不上传。") {
             if let capability = speechCapability {
                 MovoInfoRow("麦克风", value: microphoneText, systemImage: "mic")
                 MovoInfoRow("本机识别", value: capability.onDevice ? "可用" : "不可用", systemImage: "waveform")
+                MovoInfoRow("语言资源", value: capability.resources.displayName, systemImage: "arrow.down.circle")
                 if let reason = capability.failureReason {
                     Text(reason.displayName + "。可以先改成文字输入，原文不会丢。")
                         .font(MovoFont.caption).foregroundStyle(MovoColor.warning)
                         .fixedSize(horizontal: false, vertical: true)
+                }
+                if capability.needsResourceDownload {
+                    if env.isInstallingSpeechResources {
+                        VStack(alignment: .leading, spacing: MovoSpace.xs) {
+                            ProgressView(value: env.speechResourceProgress ?? 0)
+                            Text("正在下载语言资源 \(Int((env.speechResourceProgress ?? 0) * 100))%")
+                                .font(MovoFont.caption).foregroundStyle(MovoColor.muted)
+                        }
+                    } else {
+                        MovoButton("下载语言资源", systemImage: "arrow.down.circle", kind: .secondary) {
+                            _Concurrency.Task { await installSpeechResources() }
+                        }
+                        Text("资源未安装不阻断录音，只是识别可能不够稳定。")
+                            .font(MovoFont.caption).foregroundStyle(MovoColor.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             } else {
                 Text("正在检查语音能力…").font(MovoFont.caption).foregroundStyle(MovoColor.muted)
@@ -692,7 +709,13 @@ struct ManageSettingsView: View {
 
     private func reload() async {
         deleted = await env.store.recentlyDeleted()
-        speechCapability = await env.speech.capability(locale: Locale(identifier: "zh-Hans"))
+        speechCapability = await env.speechCapability()
+    }
+
+    /// 下载语言资源（7.1 第 4 步），完成后刷新能力状态。
+    private func installSpeechResources() async {
+        _ = await env.installSpeechResources()
+        speechCapability = await env.speechCapability()
     }
 
     /// 从现存实体重建搜索索引（T0.8 的维护入口）

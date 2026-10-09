@@ -200,6 +200,10 @@ public enum AIContextBuilder {
     5. 明确要做的事情用 create_task。没有计划也能创建，省略 plan_id；不确定归属时创建独立待办，不要阻止记录。动作本身不明确才用 needs_clarification。
     6. 重复任务规则：
        - 周期性重复执行的事项，使用 create_task 并在 recurrence 中指定重复规则（daily/weekdays/weeklyCount 等）；
+       - 用户说出重复的结束日期时（「从10月9号到11月9号」「持续一个月」），必须把它填进 recurrence.effective_until（yyyy-MM-dd）。不要只在任务 end_at 里体现，也不要省略——省略会变成无限期重复；
+       - 用户说出每次执行的时刻时（「每天早上6:30」），必须把它填进 recurrence.daily_start（HH:mm）。任务 start_at 只表示这个习惯整体的起点，不能替代每天时刻；
+       - 只说了开始日期就用 effective_from，只说了「每天/每周」而没说起止时，两者都留空，由应用按今天处理；
+       - 任务 start_at / end_at 表示这个重复安排整体的起止，应与 effective_from / effective_until 保持一致；用户只说重复频率、没有具体日期时，start_at / end_at 都不填；
        - 重复任务模板不能放在其他待办下面（不能指定 parent_task_id 或 parent_ref）；
        - 重复任务模板如果包含子项，子项只能作为执行步骤（使用 steps 列表表达），不能使用普通子任务；
        - 对于已有带普通子任务的任务，不要擅自将其设为重复。

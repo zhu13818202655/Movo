@@ -38,6 +38,7 @@ public struct ReviewScreen: View {
         ScreenScroll {
             ScreenChrome("回顾", subtitle: view.rangeText) {
                 HStack(spacing: MovoSpace.s) {
+                    SettingsEntryButton()
                     MovoIconButton("chevron.left", label: "上一周") {
                         weekStart = view.weekStart.adding(days: -7)
                     }

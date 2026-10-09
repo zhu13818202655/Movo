@@ -61,6 +61,7 @@ public struct QuickCaptureSheet: View {
     @State private var recording = false
     @State private var recordingStarted = Date()
     @State private var speechError: String?
+    @State private var capability: SpeechCapability?
     @State private var showClear = false
     @State private var isVisible = true
     @State private var rawText = ""
@@ -98,6 +99,7 @@ public struct QuickCaptureSheet: View {
             plans = await env.store.repository.allPlans().filter { $0.status == .active && !deleted.contains($0.id) }
             if let selected = env.capturePlanID, !plans.contains(where: { $0.id == selected }) { env.capturePlanID = nil }
             if let id = env.activeCaptureID { await env.restoreCaptureResult(id) }
+            capability = await env.speechCapability()
         }
         .onDisappear { isVisible = false; preserveRecordingAndCancel() }
         .confirmationDialog("清空当前草稿？", isPresented: $showClear, titleVisibility: .visible) {
@@ -150,6 +152,7 @@ public struct QuickCaptureSheet: View {
                     MovoBanner(kind: .warning, title: "暂时无法使用语音", message: speechError,
                                actions: [("使用文字输入", { textFocused = true })])
                 }
+                languageResourceHint
                 Picker("指定计划", selection: $env.capturePlanID) {
                     Text("自动识别归属").tag(nil as UUID?)
                     ForEach(plans) { Text($0.name).tag(Optional($0.id)) }
@@ -198,16 +201,43 @@ public struct QuickCaptureSheet: View {
         }
     }
 
+    /// 语言资源未就绪时才出现的可下载提示（7.1 第 4 步）。
+    /// 资源未安装不影响录音放行，只影响识别稳定性，所以用 info 而不是 warning。
+    @ViewBuilder
+    private var languageResourceHint: some View {
+        if let capability, capability.needsResourceDownload, !recording, !stopping {
+            if env.isInstallingSpeechResources {
+                VStack(alignment: .leading, spacing: MovoSpace.xs) {
+                    ProgressView(value: env.speechResourceProgress ?? 0)
+                    Text("正在下载本机语音资源 \(Int((env.speechResourceProgress ?? 0) * 100))%，完成后识别更稳定。")
+                        .font(MovoFont.caption).foregroundStyle(MovoColor.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                MovoBanner(kind: .info, title: "本机语音资源未就绪",
+                           message: "可以先直接录音，也可以先下载资源让识别更稳定。",
+                           actions: [("下载资源", { _Concurrency.Task { await installResources() } })])
+            }
+        }
+    }
+
+    private func installResources() async {
+        _ = await env.installSpeechResources()
+        capability = await env.speechCapability()
+        if capability?.canRecord == true { speechError = nil }
+    }
+
     private func beginRecording() async {
         guard !starting, !recording else { return }
         starting = true
         speechError = nil
         textFocused = false
         defer { starting = false }
-        let capability = await env.speech.capability(locale: Locale(identifier: "zh-Hans"))
+        let capability = await env.speechCapability()
+        self.capability = capability
         guard isVisible else { return }
         guard capability.canRecord else {
-            speechError = capability.failureReason?.displayName ?? "本机语音暂不可用，请使用文字输入或检查权限。"
+            speechError = Self.recordBlockedMessage(for: capability)
             return
         }
         let session = env.startSpeechSession()
@@ -243,7 +273,12 @@ public struct QuickCaptureSheet: View {
         let final = await session.stop()
         guard self.session != nil else { stopping = false; return }
         appendTranscript(final.hasReliableText ? final.text : update.displayText)
-        if !final.hasReliableText { speechError = "转写未能完整结束，已保留识别到的文字，请核对后提交。" }
+        if !final.hasReliableText {
+            // 区分两种失败：麦克风根本没进来音频 vs 有音频但没识别出文字。
+            speechError = final.didCaptureAudio
+                ? "转写未能完整结束，已保留识别到的文字，请核对后提交。"
+                : "没有收到麦克风的音频。请检查系统设置里的麦克风权限与输入设备，或改用文字输入。"
+        }
         consumeTask?.cancel()
         self.session = nil
         recording = false
@@ -276,6 +311,17 @@ public struct QuickCaptureSheet: View {
     private func close() {
         preserveRecordingAndCancel()
         router.dismissSheet()
+    }
+
+    /// 被拒绝录音时给出可执行的下一步（7.1 第 1–3 步），不只说"暂不可用"。
+    private static func recordBlockedMessage(for capability: SpeechCapability) -> String {
+        if let reason = capability.failureReason { return reason.displayName }
+        switch capability.mic {
+        case .denied: return "麦克风被拒绝。可以在系统设置里允许，或直接用文字输入。"
+        case .restricted: return "麦克风被系统限制，无法录音。"
+        case .undetermined: return "还没有麦克风权限，请先允许访问。"
+        case .granted: return "本机语音识别暂不可用，请改用文字输入。"
+        }
     }
 }
 

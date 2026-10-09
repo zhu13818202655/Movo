@@ -72,6 +72,7 @@ public extension DomainStore {
         var focus: [TodayItem] = []
         var later: [TodayItem] = []
         var completed: [TodayItem] = []
+        var routine: [TodayItem] = []
         var seen: Set<String> = []
 
         // 1. 今天的 Occurrence（重复行动当次）
@@ -159,11 +160,64 @@ public extension DomainStore {
             }
         }
 
+        // 3. 今天可以做的重复行动（**派生投影，不落库**）
+        //    出现条件：规则今天该有这一次、但今天还没有任何实例。
+        //    - daily / weekdays 正常情况下由 materializeOccurrences 建好今天的实例，
+        //      所以这一支对它们是兜底；真正的常客是 weeklyCount——它不预排日期，
+        //      实例只在勾选时以 occurredOn 落库，不补这一支就会在今日里结构性隐形。
+        //    勾选走 CompleteTask（模板 → completeTemplateOccurrence），与其它入口同一条写库路径。
+        let templateIndex = Dictionary(allTasks.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        // 候选只需要两件事：今天是否已记录、本周已做几次——两者都落在当前这一周里。
+        // 按周取实例（而不是 ±45 天），避免规则多时每次都拉一大片数据。
+        let week = DateOnlyRange.week(containing: date)
+        let windowOccurrences = await repository.occurrences(scheduledIn: week, planID: nil)
+        let occurrencesByRule = Dictionary(grouping: windowOccurrences, by: \.ruleId)
+
+        for rule in await repository.rules() where rule.isActive {
+            // 今天落在规则的生效窗口内
+            guard rule.effectiveFrom <= date,
+                  rule.effectiveUntil.map({ date <= $0 }) ?? true else { continue }
+            // 今天本来就该有一次（weeklyCount 不匹配日期，按「本周还差几次」判）
+            guard rule.pattern == .weeklyCount || rule.matches(date) else { continue }
+            guard let task = templateIndex[rule.taskId], task.isTemplate, task.status.isOpen else { continue }
+            let plan = task.planId.flatMap { planIndex[$0] }
+            if plan?.status == .archived { continue }
+            if let plan, plan.isPaused(on: date) { continue }
+
+            let occurrences = occurrencesByRule[rule.id] ?? []
+
+            var weeklyTarget: Int?
+            var weeklyDone = 0
+            if rule.pattern == .weeklyCount {
+                let target = max(0, min(7, rule.weeklyCount ?? 0))
+                let progress = RecurrencePolicy.weeklyProgress(rule: rule, occurrences: occurrences,
+                                                               week: week, today: date)
+                weeklyTarget = target
+                weeklyDone = progress.done
+                // 按整周看：没做够就留着，方便补足剩余次数（今天做过也不撤走，行上的
+                // 「本周 x/y 次」会跟着更新）；做够了才离开当天的位置。
+                guard progress.done + progress.skipped < target else { continue }
+            } else {
+                // 固定日期一天一次：今天已经有实例（含已跳过）就交给上面第 1 支，不重复出现。
+                guard !occurrences.contains(where: { $0.scheduledOn == date || $0.occurredOn == date })
+                else { continue }
+            }
+
+            let item = TodayItem(id: "routine-\(rule.id.uuidString)",
+                                 body: .routine(rule: rule, task: task,
+                                                weeklyTarget: weeklyTarget, weeklyDone: weeklyDone),
+                                 section: .routine, planName: plan?.name, dependency: .ready,
+                                 startAt: rule.occurrenceStart(on: date),
+                                 endAt: rule.occurrenceEnd(on: date))
+            if seen.insert(item.id).inserted { routine.append(item) }
+        }
+
         focus.sort { sortKey($0) < sortKey($1) }
         later.sort { sortKey($0) < sortKey($1) }
         completed.sort { sortKey($0) < sortKey($1) }
+        routine.sort { sortKey($0) < sortKey($1) }
 
-        return TodayView(date: date, focus: focus, later: later, completed: completed)
+        return TodayView(date: date, focus: focus, later: later, completed: completed, routine: routine)
     }
 
     /// 同一个 taskId 在今日、计划树、详情中恒等于同一对象（AC06）
@@ -177,6 +231,8 @@ public extension DomainStore {
             case .inProgress: 3
             case .overdue: 4
             case .floating: 5
+            // 候选排在所有「今天必须做」之后：它是可选的机会，不是承诺。
+            case .routine: 6
             }
         }()
         return (priority, hint, item.title)

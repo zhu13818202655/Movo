@@ -132,6 +132,8 @@ public enum RecurrencePolicy {
                                    weeklyCount: Int?,
                                    effectiveFrom: DateOnly,
                                    today: DateOnly,
+                                   updatesEffectiveUntil: Bool = false,
+                                   effectiveUntil: DateOnly? = nil,
                                    updatesDailyTimes: Bool = false,
                                    dailyStart: TimeOfDay? = nil,
                                    dailyEnd: TimeOfDay? = nil) throws -> RecurrenceRule {
@@ -142,6 +144,13 @@ public enum RecurrencePolicy {
         updated.weekdays = weekdays
         updated.weeklyCount = weeklyCount
         updated.effectiveFrom = from
+        if updatesEffectiveUntil {
+            updated.effectiveUntil = effectiveUntil
+        }
+        // 结束日期不能早于生效日：早于时保留生效日当天的最后一次，避免规则变成永不生效
+        if let until = updated.effectiveUntil, until < from {
+            updated.effectiveUntil = from
+        }
         if updatesDailyTimes {
             updated.dailyStart = dailyStart
             updated.dailyEnd = dailyEnd
@@ -160,13 +169,21 @@ public enum RecurrencePolicy {
                                      newWeekdays: [Int]?,
                                      newWeeklyCount: Int?,
                                      effectiveFrom: DateOnly,
+                                     updatesEffectiveUntil: Bool = false,
+                                     effectiveUntil: DateOnly? = nil,
                                      today: DateOnly) -> ImpactPreview {
         var probe = rule
         probe.pattern = newPattern
         probe.weekdays = newWeekdays
         probe.weeklyCount = newWeeklyCount
+        if updatesEffectiveUntil { probe.effectiveUntil = effectiveUntil }
+        // 结束日期早于生效日会让规则永不生效：预览里按生效日当天收口，与 nextVersion 的兜底一致。
+        if let until = probe.effectiveUntil, until < effectiveFrom { probe.effectiveUntil = effectiveFrom }
 
-        let horizon = DateOnlyRange(lower: effectiveFrom, upper: effectiveFrom.adding(days: 55))
+        // 预览地平线不越过规则自己的结束日，否则「不再安排」会多出一段永远不该存在的日期。
+        var horizonUpper = effectiveFrom.adding(days: 55)
+        if let until = probe.effectiveUntil, until < horizonUpper { horizonUpper = until }
+        let horizon = DateOnlyRange(lower: effectiveFrom, upper: horizonUpper)
         let future = plan(rule: probe, range: horizon, plan: nil)
         let existingFuture = existing.filter { o in
             guard let d = o.scheduledOn else { return false }
@@ -190,15 +207,21 @@ public enum RecurrencePolicy {
                                oldValue: rule.ruleDescription, newValue: probe.ruleDescription))
         }
 
-        let note = """
-        从 \(effectiveFrom.displayString) 起按新频率安排。\
-        已记录和跳过的历史都会保留，不会补造过去的行动记录。
-        """
+        var note = "从 \(effectiveFrom.displayString) 起按新频率安排。"
+        if let until = probe.effectiveUntil {
+            note += "\(until.displayString) 之后不再重复。"
+        }
+        note += "已记录和跳过的历史都会保留，不会补造过去的行动记录。"
+
+        var unaffected = ["已经完成的记录", "已经跳过的记录", "\(effectiveFrom.displayString) 之前的安排"]
+        if let until = probe.effectiveUntil {
+            unaffected.append("\(until.displayString) 之后的日期")
+        }
 
         return ImpactPreview(
             title: "调整频率的影响",
             affected: lines.sorted { $0.title < $1.title },
-            unaffected: ["已经完成的记录", "已经跳过的记录", "\(effectiveFrom.displayString) 之前的安排"],
+            unaffected: unaffected,
             dependencyReleases: 0,
             undoNote: note,
             summaryText: "\(lines.count) 项未来安排会变化")

@@ -23,8 +23,11 @@ public struct PlansScreen: View {
     public var body: some View {
         ScreenScroll {
             ScreenChrome("我的计划", subtitle: badge) {
-                MovoButton("新建计划", systemImage: "plus", kind: .primary) {
-                    router.present(.newPlan)
+                HStack(spacing: MovoSpace.s) {
+                    SettingsEntryButton()
+                    MovoButton("新建计划", systemImage: "plus", kind: .primary) {
+                        router.present(.newPlan)
+                    }
                 }
             }
 

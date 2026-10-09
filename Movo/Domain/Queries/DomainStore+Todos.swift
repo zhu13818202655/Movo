@@ -22,6 +22,9 @@ public struct TodoNode: Identifiable, Hashable, Sendable {
     public var total: Int
     public var hasChildren: Bool
     public var isContext: Bool
+    /// 重复行动模板的频率文案（如「每天 · 06:30 开始 · 到 11月9日」）。
+    /// 模板自身的 startAt / endAt 只是窗口端点，展示上必须让位给频率。
+    public var recurrenceSummary: String?
     public var isComplete: Bool { hasChildren ? total > 0 && done == total : task.status == .done }
 }
 
@@ -34,6 +37,9 @@ public extension DomainStore {
         let deleted = Set(await repository.tombstones(activeOnly: true).map(\.entityId))
         let all = await repository.allTasks()
         let index = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        // 模板行展示频率而不是模板自己的时间，这里一次取全，避免每行一次查询。
+        let rulesByTask = Dictionary((await repository.rules()).map { ($0.taskId, $0) },
+                                     uniquingKeysWith: { a, _ in a })
         let live = TaskHierarchy.ordered(all.filter { task in
             guard !task.isStep, !deleted.contains(task.id), task.status != .cancelled,
                   task.planId.map({ deleted.contains($0) || planIndex[$0]?.status == .archived }) != true
@@ -66,8 +72,10 @@ public extension DomainStore {
                     || task.status == .inProgress || task.status == .blocked
                     || task.doneAt.map { sameDay($0, today) } == true)
             case .upcoming:
-                dateMatches = task.startAt.map { $0.dateOnly > today } == true
-                    || task.endAt.map { $0.dateOnly > today } == true
+                // 与 `today` / `unscheduled` 保持同一口径：重复行动的归属由它的频率决定，
+                // 模板自己的 startAt/endAt 只是窗口端点，不该在「即将」里被当成一次待办。
+                dateMatches = !task.isTemplate && (task.startAt.map { $0.dateOnly > today } == true
+                    || task.endAt.map { $0.dateOnly > today } == true)
             case .unscheduled: dateMatches = task.startAt == nil && task.endAt == nil && !task.isTemplate
             }
             let matches = dateMatches && (includeCompleted || !complete)
@@ -75,7 +83,8 @@ public extension DomainStore {
             guard matches || !nodes.isEmpty else { return nil }
             return TodoNode(task: task, planName: task.planId.flatMap { planIndex[$0]?.name },
                             children: nodes, done: rollup.done, total: rollup.total,
-                            hasChildren: !kids.isEmpty, isContext: !matches)
+                            hasChildren: !kids.isEmpty, isContext: !matches,
+                            recurrenceSummary: task.isTemplate ? rulesByTask[task.id]?.scheduleDescription : nil)
         }
         let roots = live.filter { task in
             if let parentID { return task.parentId == parentID }

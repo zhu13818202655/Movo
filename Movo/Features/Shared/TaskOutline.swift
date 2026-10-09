@@ -181,9 +181,15 @@ struct TaskOutline: View {
         if let parentTitle { parts = ["上级：\(parentTitle)"] }
         #endif
         if node.hasChildren { parts.append("子任务 \(node.done)/\(node.total)") }
-        if let start = node.task.startAt { parts.append("开始 \(start.displayString)") }
-        else if node.task.endAt == nil, !node.task.isTemplate { parts.append("未安排") }
-        if let end = node.task.endAt { parts.append("截止 \(end.displayString)") }
+        if let summary = node.recurrenceSummary {
+            // 重复行动的「哪天该做」由频率决定，模板自己的 startAt/endAt 只是窗口端点。
+            // 展示频率，否则会读成「这个重复行动只在某一天截止」。
+            parts.append(summary)
+        } else {
+            if let start = node.task.startAt { parts.append("开始 \(start.displayString)") }
+            else if node.task.endAt == nil { parts.append("未安排") }
+            if let end = node.task.endAt { parts.append("截止 \(end.displayString)") }
+        }
         if node.isContext { parts.append("上级待办") }
         return parts.joined(separator: " · ")
     }

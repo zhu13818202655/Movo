@@ -204,7 +204,10 @@ public enum AIProposalCoding {
         return AIRecurrence(pattern: o["pattern"]?.stringValue,
                             count: intValue(o["count"]),
                             weekdays: weekdays,
-                            effectiveFrom: o["effective_from"]?.stringValue)
+                            effectiveFrom: o["effective_from"]?.stringValue,
+                            effectiveUntil: o["effective_until"]?.stringValue,
+                            dailyStart: o["daily_start"]?.stringValue,
+                            dailyEnd: o["daily_end"]?.stringValue)
     }
 
     static func decodeMeasurement(_ value: JSONValue?) -> AIMeasurement? {

@@ -19,13 +19,17 @@ public struct TaskRowConfig: Hashable, Sendable {
     public var dependencyText: String?
     public var isCompletedToday: Bool
     public var footnote: String?
+    /// 勾选框的辅助说明。重复行动的候选是「记录这次」，不是「标记完成」。
+    public var toggleLabel: String?
 
     public init(title: String, planName: String? = nil, category: PlanCategory? = nil,
                 status: TaskStatus = .todo, timeText: String? = nil, dependencyText: String? = nil,
-                isCompletedToday: Bool = false, footnote: String? = nil) {
+                isCompletedToday: Bool = false, footnote: String? = nil,
+                toggleLabel: String? = nil) {
         self.title = title; self.planName = planName; self.category = category
         self.status = status; self.timeText = timeText; self.dependencyText = dependencyText
         self.isCompletedToday = isCompletedToday; self.footnote = footnote
+        self.toggleLabel = toggleLabel
     }
 }
 
@@ -54,6 +58,9 @@ public struct TaskRow: View {
                 case .skipped: return .cancelled
                 case .pending: return .todo
                 }
+            case .routine:
+                // 今天可以做的重复行动：还没发生，按未完成显示。
+                return .todo
             }
         }()
         self.config = TaskRowConfig(
@@ -61,7 +68,8 @@ public struct TaskRow: View {
             timeText: item.timeText,
             dependencyText: item.dependency.isReady ? nil : item.dependency.badgeText,
             isCompletedToday: item.isCompletedToday,
-            footnote: item.section == .completed ? nil : item.displayStatus)
+            footnote: item.section == .completed ? nil : item.displayStatus,
+            toggleLabel: item.isRoutineCandidate ? "记录这次" : nil)
         self.showsCheckbox = true
         self.onToggle = onToggle
         self.onTap = onTap
@@ -80,7 +88,8 @@ public struct TaskRow: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(config.status == .done ? "标记未完成" : "标记完成")
+                .accessibilityLabel(config.toggleLabel
+                                    ?? (config.status == .done ? "标记未完成" : "标记完成"))
             }
 
             VStack(alignment: .leading, spacing: MovoSpace.xs) {

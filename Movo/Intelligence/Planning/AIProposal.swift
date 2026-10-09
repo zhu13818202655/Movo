@@ -173,12 +173,42 @@ public struct AIRecurrence: Sendable, Hashable, Codable {
     public var count: Int?
     public var weekdays: [Int]
     public var effectiveFrom: String?
+    /// 重复到哪一天为止（yyyy-MM-dd）。不填表示长期持续。
+    /// 「从10月9号到11月9号」的结束日期必须落在这里，否则会被当成无限期重复。
+    public var effectiveUntil: String?
+    /// 每次执行的开始时刻（HH:mm），按实例所在日解释；不填表示全天的行动。
+    public var dailyStart: String?
+    /// 每次执行的结束时刻（HH:mm）。只在用户明确给出时段时才填。
+    public var dailyEnd: String?
 
     public init(pattern: String? = nil, count: Int? = nil,
-                weekdays: [Int] = [], effectiveFrom: String? = nil) {
+                weekdays: [Int] = [], effectiveFrom: String? = nil,
+                effectiveUntil: String? = nil,
+                dailyStart: String? = nil, dailyEnd: String? = nil) {
         self.pattern = pattern; self.count = count
         self.weekdays = weekdays; self.effectiveFrom = effectiveFrom
+        self.effectiveUntil = effectiveUntil
+        self.dailyStart = dailyStart; self.dailyEnd = dailyEnd
     }
+
+    /// 「HH:mm」或「HH:mm:ss」→ `TimeOfDay`；格式不对返回 nil（不猜测，不静默取整）。
+    public static func timeOfDay(from raw: String?) -> TimeOfDay? {
+        guard let raw else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let parts = trimmed.split(separator: ":")
+        guard parts.count >= 2,
+              let hour = Int(parts[0]), let minute = Int(parts[1]) else { return nil }
+        let second = parts.count >= 3 ? Int(parts[2]) : 0
+        guard let second else { return nil }
+        let value = TimeOfDay(hour: hour, minute: minute, second: second)
+        return value.isValid ? value : nil
+    }
+
+    /// 规则里显式给出的每次开始时刻
+    public var resolvedDailyStart: TimeOfDay? { Self.timeOfDay(from: dailyStart) }
+    /// 规则里显式给出的每次结束时刻
+    public var resolvedDailyEnd: TimeOfDay? { Self.timeOfDay(from: dailyEnd) }
 }
 
 // MARK: - 单条提议
@@ -310,9 +340,12 @@ public enum AIProposalSchema {
             "type": .string("object"),
             "properties": .object([
                 "pattern": .object(["type": .string("string"), "enum": .array([.string("daily"), .string("weekdays"), .string("weeklyCount")])]),
-                "count": .object(["type": .string("integer")]),
-                "weekdays": .object(["type": .string("array"), "items": .object(["type": .string("integer")])]),
-                "effective_from": .object(["type": .string("string")])
+                "count": .object(["type": .string("integer"), "description": .string("pattern=weeklyCount 时必填，1–7")]),
+                "weekdays": .object(["type": .string("array"), "items": .object(["type": .string("integer")]), "description": .string("pattern=weekdays 时必填，1=周一 … 7=周日")]),
+                "effective_from": .object(["type": .string("string"), "description": .string("重复从哪一天开始生效，yyyy-MM-dd")]),
+                "effective_until": .object(["type": .string("string"), "description": .string("重复到哪一天为止，yyyy-MM-dd；用户说了结束日期（如「到11月9号」）必须填这里，长期持续才留空")]),
+                "daily_start": .object(["type": .string("string"), "description": .string("每次执行的开始时刻 HH:mm，如「早上6:30」填 06:30；没有明确时刻就不填")]),
+                "daily_end": .object(["type": .string("string"), "description": .string("每次执行的结束时刻 HH:mm；只在用户给出时段时填")])
             ])
         ])
         let stepBlock: JSONValue = .object([

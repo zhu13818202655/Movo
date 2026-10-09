@@ -108,15 +108,21 @@ public struct TaskDetailScreen: View {
                         }
                         Button("移动到…") { router.present(.moveTask(taskID)) }
                     }
-                    Button("改到明天") { _Concurrency.Task { await reschedule(detail, days: 1) } }
-                    Button("安排到今天") { _Concurrency.Task { await schedule(detail, day: env.store.today) } }
-                    if detail.task.startAt != nil {
-                        Button("清除开始时间") { _Concurrency.Task { await clearSchedule(detail) } }
+                    if !detail.task.isTemplate {
+                        // 重复行动的「哪天做」由频率决定：把它「改到明天」或清掉开始时间
+                        // 只会让窗口和规则脱节，所以这些动作只对普通待办开放。
+                        Button("改到明天") { _Concurrency.Task { await reschedule(detail, days: 1) } }
+                        Button("安排到今天") { _Concurrency.Task { await schedule(detail, day: env.store.today) } }
+                        if detail.task.startAt != nil {
+                            Button("清除开始时间") { _Concurrency.Task { await clearSchedule(detail) } }
+                        }
                     }
                     if detail.parent == nil {
-                        Button("设置/修改频率") { router.present(.recurrenceEditor(taskID: taskID)) }
+                        Button(detail.task.isTemplate ? "修改频率" : "设置/修改频率") {
+                            router.present(.recurrenceEditor(taskID: taskID))
+                        }
                     }
-                    if detail.task.endAt != nil {
+                    if !detail.task.isTemplate, detail.task.endAt != nil {
                         Button("清除结束时间") { _Concurrency.Task { await clearDeadline(detail) } }
                     }
                     Divider()
@@ -185,12 +191,22 @@ public struct TaskDetailScreen: View {
                     MovoDivider().padding(.leading, MovoSpace.s)
                     infoRow("阶段", value: detail.stage?.name ?? "未挂阶段", actionTitle: nil, action: {})
                     MovoDivider().padding(.leading, MovoSpace.s)
-                    infoRow("开始时间", value: detail.task.startAt?.displayString ?? "未设置",
-                            actionTitle: "编辑") { _Concurrency.Task { await editSchedule(detail) } }
-                    MovoDivider().padding(.leading, MovoSpace.s)
-                    infoRow("结束时间",
-                            value: detail.task.endAt?.displayString ?? "未设置",
-                            actionTitle: "编辑") { _Concurrency.Task { await editDeadline(detail) } }
+                    if detail.task.isTemplate {
+                        // 重复行动没有「哪一天开始/结束」，只有规则窗口；
+                        // 直接改任务时间会与规则脱节，所以这里只展示，编辑走频率页。
+                        infoRow("生效日期", value: detail.task.startAt?.displayString ?? "未设置",
+                                actionTitle: "改频率") { router.present(.recurrenceEditor(taskID: taskID)) }
+                        MovoDivider().padding(.leading, MovoSpace.s)
+                        infoRow("重复到", value: detail.task.endAt?.displayString ?? "长期持续",
+                                actionTitle: "改频率") { router.present(.recurrenceEditor(taskID: taskID)) }
+                    } else {
+                        infoRow("开始时间", value: detail.task.startAt?.displayString ?? "未设置",
+                                actionTitle: "编辑") { _Concurrency.Task { await editSchedule(detail) } }
+                        MovoDivider().padding(.leading, MovoSpace.s)
+                        infoRow("结束时间",
+                                value: detail.task.endAt?.displayString ?? "未设置",
+                                actionTitle: "编辑") { _Concurrency.Task { await editDeadline(detail) } }
+                    }
                     if let estimate = detail.task.estimateMinutes {
                         MovoDivider().padding(.leading, MovoSpace.s)
                         infoRow("预计投入", value: "\(estimate) 分钟", actionTitle: nil, action: {})

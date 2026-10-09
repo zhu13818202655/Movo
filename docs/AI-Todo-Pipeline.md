@@ -87,6 +87,7 @@ flowchart TD
 - **无置信度裁决**：去除了旧的 0.90 / 0.15 置信度门槛，模型提议只要语义合法均形成待确认项供用户预览。
 - **批内引用解析**：校验 `create_plan` 与 `create_task` 中使用的批内临时引用（`ref` / `stage_ref` / `parent_ref`），杜绝重复 `ref`、悬空引用、循环引用或跨计划/阶段的父子关系。
 - **重复任务约束**：带重复规则的待办仅允许挂 `steps`，禁止包含普通子任务；重复待办不能作为其他待办的子任务；已有带子任务的待办设为重复直接拒绝并提示走手动流程。
+- **重复块字段校验**：`recurrence` 的日期与时刻只要给了就必须能解析。`effective_from` / `effective_until` 识别不出、`effective_until` 早于 `effective_from`、`daily_start` / `daily_end` 不是 `HH:mm` 时，这一条进收件箱让用户改，**不允许静默降级**成「无限期重复」或「整天没有时刻」。预览行显示完整的「频率 · 每天时刻 · 生效窗口」（例如「每天 · 06:30 · 10月9日–11月9日」），而不是一行裸 `pattern`。
 - **先预览后落盘**：所有合法提议统一归入 `needsConfirmation` 待确认集，不再有任何直接自动落库的例外。
 
 ### C6 预览与逐项取消
@@ -97,6 +98,7 @@ flowchart TD
 ### C7 确认与原子批次提交
 
 - 用户点击确认后，`ProposalValidator.materializeBatch` 按照依赖拓扑顺序将选中的项物化为领域命令（`CreatePlan`、`CreateStage`、`CreateTask` 等），并将临时 `ref` 映射为真实 UUID。
+- **重复块落到规则上**：`recurrence.effective_until` 写入 `RecurrenceRule.effectiveUntil`，`daily_start` / `daily_end` 写入规则的每天时刻；缺 `daily_start` 时用任务 `start_at` 上的钟点兜底（模型常把「早上 6:30」只写进 `start_at`）。同时把规则窗口对齐到模板任务自身的 `startAt` / `endAt`，避免出现「规则重复到某天、任务却没有截止时间」这种两套时间语义不一致。`set_recurrence` 走 `ChangeRecurrence`：给了结束日期才覆盖窗口，没给就保留原值。
 - `DomainStore.executeBatch` 作为一个原子批次执行写入；任一命令失败整体回滚，绝不残留半套计划或孤儿任务。
 - 写入成功后更新 `Capture` 为 `aiSucceeded`（或部分取消时的 `aiPartial`），关联批次 ID。
 
@@ -121,7 +123,9 @@ flowchart TD
 
 `AIProposal.items[]` 的 `action` 取值：`create_task`、`create_plan`、`update_task`、`schedule_existing_task`、`complete_task`、`match_occurrence`、`log_activity`、`record_measurement`、`set_recurrence`、`set_dependency`、`save_note`、`needs_clarification`。
 
-每项含 `source_span`（逐字原文与字符偏移）、`reason`，以及与动作对应的数据块（`task` / `plan` / `measurement` / `recurrence` / `note`）。支持通过 `ref`、`parent_ref`、`stage_ref` 表达同批内的临时引用结构；时间统一使用 `start_at` / `end_at`（`yyyy-MM-dd` 或 ISO8601 带时区字符串）。Schema 定义见 [AIProposal.swift](../Movo/Intelligence/Planning/AIProposal.swift)。
+每项含 `source_span`（逐字原文与字符偏移）、`reason`，以及与动作对应的数据块（`task` / `plan` / `measurement` / `recurrence` / `note`）。`recurrence` 块字段：`pattern`（`daily` / `weekdays` / `weeklyCount`）、`count`（按次数）、`weekdays`（指定星期，1=周一…7=周日）、`effective_from` / `effective_until`（生效窗口，`yyyy-MM-dd`）、`daily_start` / `daily_end`（每次执行的时刻，`HH:mm`）。支持通过 `ref`、`parent_ref`、`stage_ref` 表达同批内的临时引用结构；时间统一使用 `start_at` / `end_at`（`yyyy-MM-dd` 或 ISO8601 带时区字符串）。Schema 定义见 [AIProposal.swift](../Movo/Intelligence/Planning/AIProposal.swift)。
+
+用户说了结束日期（例如「到 11 月 9 号」）就必须落进 `effective_until`：只写进任务 `end_at` 会让规则变成无限期重复。建议同时把 `effective_from` / `effective_until` 与 `start_at` / `end_at` 写成同一天，两边语义保持一套。
 
 ## 6. 可调参数
 
@@ -132,5 +136,7 @@ flowchart TD
 ## 7. 相关测试
 
 - `Tests/MovoDomainTests/AIPlanningRegressionTests.swift`：独立待办、批内临时引用、阶段归属、重复任务规则与步骤限制、预览级联取消、原子回滚、回退 5 步限制、空启动无演示数据。
+- `Tests/MovoDomainTests/AIRecurrenceWindowTests.swift`：AI 重复块保留结束日期与每天时刻、整天时刻兜底、认不出的窗口/时刻进收件箱、`set_recurrence` 覆盖与保留窗口。
+- `Tests/MovoDomainTests/RecurrenceTodayTests.swift`：今日按频率投影、规则窗口含结束日、`每周 N 次` 的候选与本周进度、勾选才落库、筛选口径。
 - `Tests/MovoPrivacyTests/PrivacyTests.swift`：全局 AI 开关生效、原文原样发送、归档计划排除、Key 不出本机断言。
 - `Tests/MovoAdapterTests/AdapterTests.swift`：OpenAI 兼容协议、上下文契约（阶段/父子/重复模板）、错误映射。

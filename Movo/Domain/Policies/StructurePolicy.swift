@@ -302,6 +302,10 @@ public enum StructurePolicy {
            end.secondsFromMidnight < start.secondsFromMidnight {
             throw MovoError.invalidStructure(reason: "每天的结束时刻不能早于开始时刻。")
         }
+        // 重复窗口：结束日期不能早于生效日期（窗口为空会让规则永不产生实例）
+        if let until = rule.effectiveUntil, until < rule.effectiveFrom {
+            throw MovoError.invalidStructure(reason: "重复的结束日期不能早于生效日期。")
+        }
     }
 
     // MARK: - 起止时间

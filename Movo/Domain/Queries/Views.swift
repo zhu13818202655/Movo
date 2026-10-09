@@ -172,13 +172,14 @@ public struct MetricPoint: Hashable, Sendable, Identifiable {
 // MARK: - 今日
 
 public enum TodaySection: String, Sendable, CaseIterable, Identifiable {
-    case focus, later, completed
+    case focus, later, completed, routine
     public var id: String { rawValue }
     public var displayName: String {
         switch self {
         case .focus: "今天的重点"
         case .later: "稍后再做"
         case .completed: "已完成"
+        case .routine: "今天也可以做"
         }
     }
 }
@@ -198,6 +199,10 @@ public struct TodayItem: Identifiable, Hashable, Sendable {
         case floating(task: Task)
         /// 逾期
         case overdue(task: Task, daysLate: Int)
+        /// 今天可以做的重复行动（**派生投影，不落库**）。
+        /// 规则今天该有这一次、但今天还没有任何实例时出现；
+        /// 「每周 N 次」不预排日期，整周都靠这一支出现，本周目标达成后自动离开。
+        case routine(rule: RecurrenceRule, task: Task, weeklyTarget: Int?, weeklyDone: Int)
     }
 
     public var id: String
@@ -232,6 +237,7 @@ public struct TodayItem: Identifiable, Hashable, Sendable {
         switch body {
         case .deadline(let t), .scheduled(let t), .inProgress(let t), .floating(let t), .overdue(let t, _): t.id
         case .occurrence(_, let t): t?.id
+        case .routine(_, let t, _, _): t.id
         }
     }
 
@@ -239,12 +245,19 @@ public struct TodayItem: Identifiable, Hashable, Sendable {
         switch body {
         case .deadline(let t), .scheduled(let t), .inProgress(let t), .floating(let t), .overdue(let t, _): t.title
         case .occurrence(_, let t): t?.title ?? "重复行动"
+        case .routine(_, let t, _, _): t.title
         }
     }
 
     public var occurrenceId: UUID? {
         if case .occurrence(let o, _) = body { return o.id }
         return nil
+    }
+
+    /// 是不是「今天也可以做」的重复行动候选（派生，还没有实例）
+    public var isRoutineCandidate: Bool {
+        if case .routine = body { return true }
+        return false
     }
 
     /// 完成开关的语义区分：一次性任务完成 vs Occurrence 当次完成（事件不同）
@@ -261,6 +274,8 @@ public struct TodayItem: Identifiable, Hashable, Sendable {
         case .inProgress: "进行中"
         case .floating: "未安排"
         case .overdue(_, let n): "逾期 \(n) 天"
+        case .routine(_, _, let target, let done):
+            if let target { "本周 \(done)/\(target) 次" } else { "今天该做" }
         }
     }
 }
@@ -275,9 +290,13 @@ public struct TodayView: Hashable, Sendable {
     public var focus: [TodayItem]
     public var later: [TodayItem]
     public var completed: [TodayItem]
+    /// 今天可以做的重复行动（派生，不落库）。不参与「待推进」计数。
+    public var routine: [TodayItem]
 
-    public init(date: DateOnly, focus: [TodayItem] = [], later: [TodayItem] = [], completed: [TodayItem] = []) {
+    public init(date: DateOnly, focus: [TodayItem] = [], later: [TodayItem] = [],
+                completed: [TodayItem] = [], routine: [TodayItem] = []) {
         self.date = date; self.focus = focus; self.later = later; self.completed = completed
+        self.routine = routine
     }
 
     public var pendingCount: Int { focus.count + later.count }
@@ -286,13 +305,14 @@ public struct TodayView: Hashable, Sendable {
     /// "3项待推进 · 2项已完成"
     public var badgeText: String { "\(pendingCount)项待推进 · \(completedCount)项已完成" }
 
-    public var isEmpty: Bool { focus.isEmpty && later.isEmpty && completed.isEmpty }
+    public var isEmpty: Bool { focus.isEmpty && later.isEmpty && completed.isEmpty && routine.isEmpty }
 
     public func items(in section: TodaySection) -> [TodayItem] {
         switch section {
         case .focus: focus
         case .later: later
         case .completed: completed
+        case .routine: routine
         }
     }
 }

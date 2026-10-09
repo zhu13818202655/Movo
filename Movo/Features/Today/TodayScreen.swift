@@ -20,7 +20,7 @@ public struct TodayScreen: View {
         ScreenScroll {
             ScreenChrome("待办", subtitle: env.store.today.displayStringWithWeekday) {
                 HStack(spacing: MovoSpace.s) {
-                    SyncStatusBadge()
+                    SettingsEntryButton()
                     MovoIconButton("sparkles.rectangle.stack", label: "整理记录") { router.select(.inbox) }
                     MovoIconButton("magnifyingglass", label: "搜索") { router.select(.search) }
                 }
@@ -89,7 +89,8 @@ public struct TodayScreen: View {
         let recurring = (view.focus + view.later + (showCompleted ? view.completed : [])).filter {
             if case .occurrence = $0.body { return true }; return false
         }
-        if nodes.isEmpty && recurring.isEmpty {
+        let routine = view.routine
+        if nodes.isEmpty && recurring.isEmpty && routine.isEmpty {
             MovoEmptyState(systemImage: "sun.max", title: "今天还没有安排", message: emptyMessage,
                            actionTitle: "安排一项待办", action: {
                 adding = true
@@ -97,6 +98,11 @@ public struct TodayScreen: View {
         }
         if !nodes.isEmpty { SectionBlock("今天的待办", trailing: "含逾期与进行中") { TaskOutline(nodes: nodes) } }
         if !recurring.isEmpty { SectionBlock("今天的重复行动") { todayRows(recurring) } }
+        // 派生投影：规则今天该有这一次、但今天还没记录。不参与「待推进」计数，
+        // 有精力就顺手做一次；本周目标达成的「每周 N 次」会自动离开这里。
+        if !routine.isEmpty {
+            SectionBlock("今天也可以做", trailing: "有精力就顺手做一次") { todayRows(routine) }
+        }
     }
 
     private func todayRows(_ items: [TodayItem]) -> some View {

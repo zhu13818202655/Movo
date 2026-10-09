@@ -27,6 +27,7 @@ public struct RecurrenceEditorScreen: View {
     @State private var weekdays: Set<Int> = [1, 3, 5]
     @State private var weeklyCount = 3
     @State private var effectiveFrom: DateOnly?
+    @State private var effectiveUntil: DateOnly?
     @State private var dailyStartOn = false
     @State private var dailyStart = Date()
     @State private var dailyEndOn = false
@@ -126,7 +127,7 @@ public struct RecurrenceEditorScreen: View {
                 }
 
                 MovoFormSection("生效时间",
-                                footnote: "生效日期早于今天时会自动修正为今天，并记入历史。") {
+                                footnote: "生效日期早于今天时会自动修正为今天，并记入历史。不设置结束日期就长期持续。") {
                     MovoDateField("从哪一天开始生效", placeholder: "今天",
                                   isOn: Binding(
                                     get: { effectiveFrom != nil },
@@ -134,6 +135,19 @@ public struct RecurrenceEditorScreen: View {
                                   date: Binding(
                                     get: { (effectiveFrom ?? env.store.today).pickerDate },
                                     set: { effectiveFrom = DateOnly(from: $0, in: env.store.currentTimeZone) }),
+                                  timeZone: env.store.currentTimeZone)
+
+                    MovoDateField("重复到哪一天为止", placeholder: "长期持续",
+                                  isOn: Binding(
+                                    get: { effectiveUntil != nil },
+                                    set: { on in
+                                        guard on else { effectiveUntil = nil; return }
+                                        let start = effectiveFrom ?? env.store.today
+                                        effectiveUntil = start.adding(days: 30, in: env.store.currentTimeZone)
+                                    }),
+                                  date: Binding(
+                                    get: { (effectiveUntil ?? effectiveFrom ?? env.store.today).pickerDate },
+                                    set: { effectiveUntil = DateOnly(from: $0, in: env.store.currentTimeZone) }),
                                   timeZone: env.store.currentTimeZone)
                 }
 
@@ -213,6 +227,7 @@ public struct RecurrenceEditorScreen: View {
                         weekdays: pattern == .weekdays ? weekdays.sorted() : [],
                         weeklyCount: pattern == .weeklyCount ? weeklyCount : nil,
                         effectiveFrom: effectiveFrom ?? env.store.today,
+                        effectiveUntil: effectiveUntil,
                         dailyStart: dailyStartOn ? timeOfDay(from: dailyStart) : nil,
                         dailyEnd: dailyEndOn ? timeOfDay(from: dailyEnd) : nil)
     }
@@ -239,6 +254,8 @@ public struct RecurrenceEditorScreen: View {
             newWeekdays: pattern == .weekdays ? weekdays.sorted() : nil,
             newWeeklyCount: pattern == .weeklyCount ? weeklyCount : nil,
             effectiveFrom: effectiveFrom ?? env.store.today,
+            updatesEffectiveUntil: true,
+            effectiveUntil: effectiveUntil,
             today: env.store.today)
     }
 
@@ -248,9 +265,13 @@ public struct RecurrenceEditorScreen: View {
             env.lastError = .invalidStructure(reason: "工作日模式至少需要选择一个星期。")
             return
         }
+        let from = effectiveFrom ?? env.store.today
+        if let until = effectiveUntil, until < from {
+            env.lastError = .invalidStructure(reason: "重复的结束日期不能早于开始日期。")
+            return
+        }
         isSaving = true
         defer { isSaving = false }
-        let from = effectiveFrom ?? env.store.today
         do {
             if let rule {
                 try await env.store.execute(ChangeRecurrence(
@@ -258,6 +279,7 @@ public struct RecurrenceEditorScreen: View {
                     weekdays: pattern == .weekdays ? weekdays.sorted() : [],
                     weeklyCount: pattern == .weeklyCount ? weeklyCount : nil,
                     effectiveFrom: from,
+                    updatesEffectiveUntil: true, effectiveUntil: effectiveUntil,
                     updatesDailyTimes: true, dailyStart: draft.dailyStart, dailyEnd: draft.dailyEnd,
                     baseRevision: rule.revision))
             } else if needsConversion {
@@ -269,6 +291,7 @@ public struct RecurrenceEditorScreen: View {
                             weekdays: pattern == .weekdays ? weekdays.sorted() : [],
                             weeklyCount: pattern == .weeklyCount ? weeklyCount : nil,
                             effectiveFrom: from,
+                            effectiveUntil: effectiveUntil,
                             dailyStart: draft.dailyStart, dailyEnd: draft.dailyEnd)
                     ],
                     summary: "子任务转为步骤并设置重复"))
@@ -278,6 +301,7 @@ public struct RecurrenceEditorScreen: View {
                     weekdays: pattern == .weekdays ? weekdays.sorted() : [],
                     weeklyCount: pattern == .weeklyCount ? weeklyCount : nil,
                     effectiveFrom: from,
+                    effectiveUntil: effectiveUntil,
                     dailyStart: draft.dailyStart, dailyEnd: draft.dailyEnd))
             }
             env.pendingRecurrence = nil
@@ -301,6 +325,7 @@ public struct RecurrenceEditorScreen: View {
             weekdays = Set(rule.weekdays ?? [])
             weeklyCount = rule.weeklyCount ?? 3
             effectiveFrom = rule.effectiveFrom
+            effectiveUntil = rule.effectiveUntil
             if let start = rule.dailyStart {
                 dailyStartOn = true
                 dailyStart = pickerDate(for: start)
@@ -450,6 +475,9 @@ public struct RecurrencePreviewScreen: View {
                         }
                         MovoInfoRow("生效日期", value: newRule.effectiveFrom.displayString,
                                     systemImage: "flag")
+                        MovoInfoRow("重复到",
+                                    value: newRule.effectiveUntil?.displayString ?? "长期持续",
+                                    systemImage: "flag.checkered")
                         if newRule.dailyStart != nil || newRule.dailyEnd != nil {
                             let start = newRule.dailyStart?.displayString ?? "—"
                             let end = newRule.dailyEnd?.displayString ?? "—"
@@ -482,6 +510,7 @@ public struct RecurrencePreviewScreen: View {
                     weekdays: draft.pattern == .weekdays ? draft.weekdays : [],
                     weeklyCount: draft.pattern == .weeklyCount ? draft.weeklyCount : nil,
                     effectiveFrom: draft.effectiveFrom,
+                    updatesEffectiveUntil: true, effectiveUntil: draft.effectiveUntil,
                     updatesDailyTimes: true, dailyStart: draft.dailyStart, dailyEnd: draft.dailyEnd,
                     baseRevision: rule.revision))
             } else {
@@ -490,6 +519,7 @@ public struct RecurrencePreviewScreen: View {
                     weekdays: draft.pattern == .weekdays ? draft.weekdays : [],
                     weeklyCount: draft.pattern == .weeklyCount ? draft.weeklyCount : nil,
                     effectiveFrom: draft.effectiveFrom,
+                    effectiveUntil: draft.effectiveUntil,
                     dailyStart: draft.dailyStart, dailyEnd: draft.dailyEnd))
             }
             env.pendingRecurrence = nil
@@ -520,6 +550,8 @@ public struct RecurrencePreviewScreen: View {
             newWeeklyCount: draft.map { $0.pattern == .weeklyCount ? $0.weeklyCount : nil }
                 ?? loadedRule.weeklyCount,
             effectiveFrom: draft?.effectiveFrom ?? env.store.today,
+            updatesEffectiveUntil: draft != nil,
+            effectiveUntil: draft?.effectiveUntil,
             today: env.store.today)
     }
 }

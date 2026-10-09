@@ -296,7 +296,7 @@ Movo/
 | `Settings/` | M13 设置、导出预览、导入 Movo 文件、最近删除、冲突裁决 | `SettingsScreen.swift`、`SettingsSections.swift`、`ExportPreviewScreen.swift`、`ImportPlanScreen.swift`、`RecentlyDeletedScreen.swift`、`ConflictResolutionScreen.swift` |
 | `Plans/NewTaskSheet.swift`、`Shared/TaskOutline.swift` | D04-Manual / M04-Manual 手动创建、M12-Subtasks 多级子任务 | `DomainStore+Todos.swift`、`TaskHierarchy.swift` |
 | `Capture/` | D04 / M04 / M02 AI 输入、录音、转写、整理中、失败、批量预览 | `CaptureSheets.swift`、`CaptureStatusScreens.swift`、`BulkPreviewScreen.swift` |
-| `Shared/` | 页面骨架与共用控件 | `Scaffold.swift`、`FormControls.swift`、`SyncStatusBadge.swift` |
+| `Shared/` | 页面骨架与共用控件 | `Scaffold.swift`、`FormControls.swift`、`SettingsEntryButton.swift` |
 
 ### 1.11 Tests
 

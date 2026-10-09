@@ -134,6 +134,11 @@ public final class AppEnvironment {
     public var isProcessing = false
     public var lastTranscript: TranscriptFinal?
 
+    /// 本机语音资源安装进度（0…1）；不在下载时为 nil。
+    public private(set) var speechResourceProgress: Double?
+    /// 是否正在下载本机语音资源（7.1 第 4 步）。
+    public private(set) var isInstallingSpeechResources = false
+
     /// 频率编辑的待确认草稿（编辑器 → M09-FrequencyPreview 影响预览）
     public var pendingRecurrence: RecurrenceDraft?
 
@@ -428,7 +433,38 @@ public final class AppEnvironment {
 
     // MARK: - 语音会话（7.3）
 
-    public func startSpeechSession(locale: Locale = Locale(identifier: "zh-Hans")) -> SpeechSession {
+    /// 能力检查入口。统一用 `SpeechDefaults.preferredLocale`，
+    /// 避免界面各写一份硬编码 locale 与 `capability` 的归一化结果错位。
+    public func speechCapability() async -> SpeechCapability {
+        await speech.capability(locale: SpeechDefaults.preferredLocale)
+    }
+
+    /// 下载并安装本机语音资源（7.1 第 4 步）；返回是否就绪。
+    /// 仅在资源未安装/下载中时需要，正常录音不依赖它。
+    @discardableResult
+    public func installSpeechResources(locale: Locale = SpeechDefaults.preferredLocale) async -> Bool {
+        guard !isInstallingSpeechResources else { return false }
+        isInstallingSpeechResources = true
+        speechResourceProgress = 0
+        defer {
+            isInstallingSpeechResources = false
+            speechResourceProgress = nil
+        }
+        do {
+            try await speech.ensureResources(locale: locale) { [weak self] fraction in
+                _Concurrency.Task { @MainActor in
+                    self?.speechResourceProgress = min(max(fraction, 0), 1)
+                }
+            }
+            lastError = nil
+            return true
+        } catch {
+            lastError = error as? MovoError ?? .speechUnavailable(reason: .resourceMissing)
+            return false
+        }
+    }
+
+    public func startSpeechSession(locale: Locale = SpeechDefaults.preferredLocale) -> SpeechSession {
         let session = speech.makeSession(locale: locale)
         speechSession = session
         return session
