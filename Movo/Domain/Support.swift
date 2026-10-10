@@ -92,8 +92,8 @@ public struct FixedDeviceIDProvider: DeviceIDProvider {
 
 // MARK: - 配置装载（Config/*.json）
 
-public struct AppDefaults: Sendable, Codable {
-    public struct Notifications: Sendable, Codable {
+public struct AppDefaults: Sendable, Codable, Equatable {
+    public struct Notifications: Sendable, Codable, Equatable {
         public var timedTaskLeadMinutes: Int
         public var dateOnlyTaskHour: Int
         public var dateOnlyTaskMinute: Int
@@ -129,7 +129,37 @@ public struct AppDefaults: Sendable, Codable {
         }
     }
 
-    public struct AI: Sendable, Codable {
+    /// 专注计时（第 7.2 节「开始可选计时」）。界面上能看到的行为都从这里取值，不写死在视图里。
+    public struct Focus: Sendable, Codable, Equatable {
+        /// 倒计时归零时是否提醒一次。关掉只影响提醒，计时照常继续走。
+        public var remindAtEnd: Bool
+        /// 结束时是否把记录时长截断到锚点时刻。到点后拖延很久才回来结束，截断比记录真实拖延更贴近「这次投入」。
+        public var truncateDurationAtAnchor: Bool
+        /// 截断的宽限：超出锚点在这么多分钟以内的按实际记录。
+        /// 这点超出只是分钟级的收尾，截掉反而让记录失真。
+        public var truncateGraceMinutes: Int
+        /// 长时间无人操作的提示阈值：暂停中、或已超出计划时间这么久之后，下次打开应用提示一次。
+        public var staleSessionHours: Int
+
+        enum CodingKeys: String, CodingKey {
+            case remindAtEnd = "remind_at_end"
+            case truncateDurationAtAnchor = "truncate_duration_at_anchor"
+            case truncateGraceMinutes = "truncate_grace_minutes"
+            case staleSessionHours = "stale_session_hours"
+        }
+
+        public init(remindAtEnd: Bool = true,
+                    truncateDurationAtAnchor: Bool = true,
+                    truncateGraceMinutes: Int = 5,
+                    staleSessionHours: Int = 3) {
+            self.remindAtEnd = remindAtEnd
+            self.truncateDurationAtAnchor = truncateDurationAtAnchor
+            self.truncateGraceMinutes = truncateGraceMinutes
+            self.staleSessionHours = staleSessionHours
+        }
+    }
+
+    public struct AI: Sendable, Codable, Equatable {
         public var maxItemsPerInput: Int
         public var maxTextCharacters: Int
         public var recentTaskTitlesLimit: Int
@@ -173,7 +203,7 @@ public struct AppDefaults: Sendable, Codable {
         }
     }
 
-    public struct Capture: Sendable, Codable {
+    public struct Capture: Sendable, Codable, Equatable {
         public var maxRecordingSeconds: Double
         public var stopFinalSegmentTimeoutSeconds: Double
         public var audioRetentionHours: Int
@@ -187,7 +217,7 @@ public struct AppDefaults: Sendable, Codable {
         }
     }
 
-    public struct Sync: Sendable, Codable {
+    public struct Sync: Sendable, Codable, Equatable {
         public var recordStateJSONLimitBytes: Int
         public var eventPushBatchSize: Int
         public var debounceSeconds: Double
@@ -199,13 +229,14 @@ public struct AppDefaults: Sendable, Codable {
         }
     }
 
-    public struct Lifecycle: Sendable, Codable {
+    public struct Lifecycle: Sendable, Codable, Equatable {
         public var tombstoneRetentionDays: Int
         enum CodingKeys: String, CodingKey { case tombstoneRetentionDays = "tombstone_retention_days" }
     }
 
     public var undoSteps: Int
     public var notifications: Notifications
+    public var focus: Focus
     public var ai: AI
     public var capture: Capture
     public var sync: Sync
@@ -213,17 +244,19 @@ public struct AppDefaults: Sendable, Codable {
 
     enum CodingKeys: String, CodingKey {
         case undoSteps = "undo_steps"
-        case notifications, ai, capture, sync, lifecycle
+        case notifications, focus, ai, capture, sync, lifecycle
     }
 
     public init(undoSteps: Int = 5,
                 notifications: Notifications,
+                focus: Focus = Focus(),
                 ai: AI,
                 capture: Capture,
                 sync: Sync,
                 lifecycle: Lifecycle) {
         self.undoSteps = undoSteps
         self.notifications = notifications
+        self.focus = focus
         self.ai = ai
         self.capture = capture
         self.sync = sync
@@ -234,6 +267,9 @@ public struct AppDefaults: Sendable, Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.undoSteps = try container.decodeIfPresent(Int.self, forKey: .undoSteps) ?? 5
         self.notifications = try container.decode(Notifications.self, forKey: .notifications)
+        // 缺段时退回内置默认，而不是让整份配置解码失败退到 `.fallback`：
+        // 其余段落是用户已经调好的，不该因为少一个新增的段就一起被丢掉。
+        self.focus = try container.decodeIfPresent(Focus.self, forKey: .focus) ?? Focus()
         self.ai = try container.decode(AI.self, forKey: .ai)
         self.capture = try container.decode(Capture.self, forKey: .capture)
         self.sync = try container.decode(Sync.self, forKey: .sync)
@@ -249,6 +285,8 @@ public struct AppDefaults: Sendable, Codable {
             quietHoursStart: 22, quietHoursEnd: 7, aggregationWindowMinutes: 15,
             weeklyReviewWeekday: 7, weeklyReviewHour: 20, weeklyReviewMinute: 0,
             blockedReminderEnabled: false, blockedRescheduleThreshold: 3, lockScreenHideDetails: true),
+        focus: Focus(remindAtEnd: true, truncateDurationAtAnchor: true,
+                     truncateGraceMinutes: 5, staleSessionHours: 3),
         ai: AI(maxItemsPerInput: 10, maxTextCharacters: 2000, recentTaskTitlesLimit: 10,
                contextTasksLimit: 30, connectTimeoutSeconds: 60, totalTimeoutSeconds: 120,
                autoRetryCount: 2, autoRetryBackoffSeconds: [1, 2], progressMustShowAfterSeconds: 15),
@@ -261,7 +299,7 @@ public struct AppDefaults: Sendable, Codable {
 /// Config 资源装载器。找不到资源时回落到内置默认，保证无资源运行也可用。
 public enum ConfigLoader {
     public static func loadDefaults(bundle: Bundle = .movoResources) -> AppDefaults {
-        guard let url = bundle.url(forResource: "Defaults", withExtension: "json"),
+        guard let url = resourceURL(named: "Defaults", extension: "json", in: bundle),
               let data = try? Data(contentsOf: url),
               let decoded = try? JSONDecoder().decode(AppDefaults.self, from: data)
         else { return .fallback }
@@ -269,16 +307,27 @@ public enum ConfigLoader {
     }
 
     public static func loadModelCatalog(bundle: Bundle = .movoResources) -> ModelCatalog {
-        guard let url = bundle.url(forResource: "ModelsCatalog", withExtension: "json"),
+        guard let url = resourceURL(named: "ModelsCatalog", extension: "json", in: bundle),
               let data = try? Data(contentsOf: url),
               let doc = try? JSONDecoder().decode(ModelCatalog.self, from: data)
         else { return .fallback }
         return doc
     }
+
+    /// `Config/` 是以 folder reference 打包的，文件不会平铺到 bundle 根：
+    /// iOS 落在 `MovoKit.framework/Config/`，macOS 落在 `MovoKit.framework/Versions/A/Resources/Config/`。
+    /// 两种布局都带一层 `Config` 目录，所以根目录找不到时再按子目录找一次——
+    /// 否则会一直读不到配置，静默用兜底值，改了 JSON 也不生效。
+    ///
+    /// 开放出来是为了让测试能断言「加载器找得到这份资源」，而不是只能断言兜底值。
+    public static func resourceURL(named name: String, extension ext: String, in bundle: Bundle) -> URL? {
+        bundle.url(forResource: name, withExtension: ext)
+            ?? bundle.url(forResource: name, withExtension: ext, subdirectory: "Config")
+    }
 }
 
 extension Bundle {
-    /// Config/ 以 folder reference 打包，资源可直接在 bundle 根查找；SPM/测试环境下回落到 main。
+    /// Config/ 以 folder reference 打包，需按 `Config` 子目录查找；SPM/测试环境下回落到 main。
     public static var movoResources: Bundle {
         #if SWIFT_PACKAGE
         return .module

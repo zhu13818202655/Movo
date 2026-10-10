@@ -60,7 +60,7 @@ public struct TodayScreen: View {
                     })
                     .frame(minHeight: 220)
                 } else {
-                    SectionBlock(filter.title) { TaskOutline(nodes: nodes) }
+                    SectionBlock(filter.title) { TaskOutline(nodes: nodes, timeContext: .absolute) }
                 }
             }
         }
@@ -96,7 +96,11 @@ public struct TodayScreen: View {
                 adding = true
             })
         }
-        if !nodes.isEmpty { SectionBlock("今天的待办", trailing: "含逾期与进行中") { TaskOutline(nodes: nodes) } }
+        if !nodes.isEmpty {
+            SectionBlock("今天的待办", trailing: "含逾期与进行中") {
+                TaskOutline(nodes: nodes, timeContext: .today(view.date))
+            }
+        }
         if !recurring.isEmpty { SectionBlock("今天的重复行动") { todayRows(recurring) } }
         // 派生投影：规则今天该有这一次、但今天还没记录。不参与「待推进」计数，
         // 有精力就顺手做一次；本周目标达成的「每周 N 次」会自动离开这里。
@@ -108,17 +112,59 @@ public struct TodayScreen: View {
     private func todayRows(_ items: [TodayItem]) -> some View {
         VStack(spacing: 0) {
             ForEach(items) { item in
-                TaskRow(item: item, onToggle: {
-                    _Concurrency.Task {
-                        await env.toggleCompletion(of: item)
-                        error = env.lastError?.localizedDescription
-                    }
-                }, onTap: {
-                    if let id = item.taskId { router.push(.taskDetail(id)) }
-                })
-                .padding(.horizontal, MovoSpace.s)
+                todayRow(item)
+                    .padding(.horizontal, MovoSpace.s)
             }
         }
+    }
+
+    /// 一行今日条目。
+    ///
+    /// 只有正在计时的这一行才包一层时钟——徽标上的秒数要跳，其余行不需要
+    /// 每秒重建一次。行本体的点击仍然进入任务详情，开始/回到计时是行尾的独立入口。
+    @ViewBuilder
+    private func todayRow(_ item: TodayItem) -> some View {
+        let session = item.taskId.flatMap { env.activeFocus(for: $0) }
+        if let session {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                rowBody(item, session: session, snapshot: env.focusSnapshot(session, at: context.date))
+            }
+        } else {
+            rowBody(item, session: nil, snapshot: nil)
+        }
+    }
+
+    private func rowBody(_ item: TodayItem, session: FocusPolicy.Session?,
+                         snapshot: FocusPolicy.Snapshot?) -> some View {
+        let focusTask = item.focusableTask
+        return TaskRow(item: item, timeContext: .today(env.store.today),
+                       onToggle: {
+                           _Concurrency.Task {
+                               await env.toggleCompletion(of: item)
+                               error = env.lastError?.localizedDescription
+                           }
+                       },
+                       onTap: {
+                           if let id = item.taskId { router.push(.taskDetail(id)) }
+                       },
+                       onFocus: focusTask.map { task in
+                           // 开始之后直接进计时页：在清单上按一下「开始专注」却停在原地，
+                           // 看不出那一下到底生没生效。被拦下时（另一次正在计时）留在清单上，
+                           // 由计时条与提示说明原因。
+                           { if env.beginFocus(task) { router.push(.focus(task.id)) } }
+                       },
+                       focusBadge: snapshot.map(badgeText),
+                       focusBadgeIsPaused: snapshot?.status == .paused,
+                       onFocusTap: session.map { running in
+                           { router.push(.focus(running.taskID)) }
+                       })
+    }
+
+    /// 徽标上的数字：倒计时看剩余，归零后看超出，正计时看已用。
+    private func badgeText(_ snapshot: FocusPolicy.Snapshot) -> String {
+        if snapshot.isOverrun { return "+" + FocusPolicy.clockText(snapshot.overrunSeconds) }
+        if let remaining = snapshot.remainingSeconds { return FocusPolicy.clockText(remaining) }
+        return FocusPolicy.clockText(snapshot.elapsedSeconds)
     }
 
     private func checkSavedTask(_ id: UUID) async {

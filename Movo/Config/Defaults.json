@@ -19,6 +19,12 @@
     "blocked_reschedule_threshold": 3,
     "lock_screen_hide_details": true
   },
+  "focus": {
+    "remind_at_end": true,
+    "truncate_duration_at_anchor": true,
+    "truncate_grace_minutes": 5,
+    "stale_session_hours": 3
+  },
   "ai": {
     "max_items_per_input": 10,
     "max_text_characters": 2000,

@@ -15,6 +15,8 @@ struct NewTaskSheet: View {
     @State private var startDraft = TimePointDraft()
     @State private var endDraft = TimePointDraft()
     @State private var priority = TaskPriority.normal
+    @State private var estimateText = ""
+    @State private var estimateError: String?
     @State private var saving = false
     @State private var error: String?
     @State private var loaded = false
@@ -44,6 +46,10 @@ struct NewTaskSheet: View {
                                    draft: $startDraft, timeZone: env.store.currentTimeZone)
                 MovoTimePointField("结束时间", placeholder: "未设置，可以稍后再定",
                                    draft: $endDraft, timeZone: env.store.currentTimeZone)
+                EstimateMinutesField(text: $estimateText, errorMessage: estimateError)
+                    .onChange(of: estimateText) { _, new in
+                        estimateError = EstimateMinutes.parse(new).invalidMessage
+                    }
                 Picker("优先级", selection: $priority) {
                     ForEach(TaskPriority.allCases) { value in Text(value.displayName).tag(value) }
                 }
@@ -71,6 +77,12 @@ struct NewTaskSheet: View {
 
     private func save() async {
         guard loaded, !saving, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let estimate = EstimateMinutes.parse(estimateText)
+        guard !estimate.isInvalid else {
+            estimateError = estimate.invalidMessage
+            return
+        }
+        estimateError = nil
         saving = true
         defer { saving = false }
         do {
@@ -85,6 +97,7 @@ struct NewTaskSheet: View {
                 notes: notes.isEmpty ? nil : notes,
                 startAt: startDraft.point(in: env.store.currentTimeZone),
                 endAt: endDraft.point(in: env.store.currentTimeZone),
+                estimateMinutes: estimate.value,
                 priority: priority, source: .manual))
             env.lastBatchNotice = env.store.lastNotification
             router.dismissSheet()

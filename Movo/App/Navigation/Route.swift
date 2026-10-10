@@ -60,6 +60,9 @@ public enum Route: Hashable, Identifiable, Sendable {
     case newTask(planID: UUID?, parentID: UUID?, scheduledToday: Bool)
     case moveTask(UUID)
 
+    // 专注计时（D14 / M15 系列）
+    case focus(UUID)
+
     // 结果与记录
     case metricHistory(metricID: UUID)
     case logMeasurement(metricID: UUID)
@@ -96,6 +99,7 @@ public enum Route: Hashable, Identifiable, Sendable {
         case .taskDetail(let id): "task-\(id.uuidString)"
         case .newTask: "new-task"
         case .moveTask(let id): "move-task-\(id.uuidString)"
+        case .focus(let id): "focus-\(id.uuidString)"
         case .metricHistory(let id): "metric-history-\(id.uuidString)"
         case .logMeasurement(let id): "log-measurement-\(id.uuidString)"
         case .bulkPreview(let title, let ids): "bulk-\(title.hashValue)-\(ids.count)"
@@ -132,6 +136,7 @@ public enum Route: Hashable, Identifiable, Sendable {
         case .taskDetail: "D07 / M12 任务详情"
         case .newTask: "D04-Manual / M04-Manual 新建待办"
         case .moveTask: "移动待办"
+        case .focus: "D14 / M15 专注计时"
         case .metricHistory: "M09-ResultHistory 结果历史"
         case .logMeasurement: "M09-Result 补记结果"
         case .bulkPreview: "D05-BulkPreview 批量影响预览"

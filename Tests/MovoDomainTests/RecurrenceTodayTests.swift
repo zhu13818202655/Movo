@@ -46,7 +46,9 @@ final class RecurrenceTodayTests: XCTestCase {
         let today = scheduled(view)
         XCTAssertEqual(today.count, 1, "今天该有一次，展示成独立的今日条目")
         XCTAssertEqual(today.first?.taskId, taskID, "它仍然关联着同一条重复行动")
-        XCTAssertEqual(today.first?.timeText, "06:30", "规则上的每天时刻要落到这一次上")
+        XCTAssertEqual(today.first?.timeText(in: .today(day)), "06:30", "规则上的每天时刻要落到这一次上")
+        XCTAssertEqual(today.first?.timeText(in: .absolute), "10月8日 06:30",
+                       "今日上下文省略的只是「当天」这个日期，绝对上下文照旧完整")
         XCTAssertTrue(view.routine.isEmpty, "已经建成实例了，不该再出现候选")
         XCTAssertEqual(view.pendingCount, 1)
     }

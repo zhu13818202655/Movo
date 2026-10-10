@@ -48,6 +48,10 @@ public enum MovoDeepLink {
         case .task(let id):
             // 通知都是"今天要做什么"，因此回到今日入口再进详情
             router.go(to: .taskDetail(id), in: .today)
+        case .focus(let id):
+            // 到点提醒落在计时页而不是任务详情：用户回来是要结束这次计时，
+            // 落在详情页还得再点一次「继续专注」才能看到计时。
+            router.go(to: .focus(id), in: .today)
         }
     }
 

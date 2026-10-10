@@ -17,8 +17,11 @@ struct InlineTaskEditor: View {
     @State private var startDraft = TimePointDraft()
     @State private var endDraft = TimePointDraft()
     @State private var priority = TaskPriority.normal
+    @State private var estimateText = ""
+    @State private var estimateError: String?
     @State private var more = false
     @State private var showDate = false
+    @State private var showEstimate = false
     @State private var saving = false
     @State private var loaded = false
     @State private var error: String?
@@ -74,6 +77,7 @@ struct InlineTaskEditor: View {
                                         fallback: env.store.now)
             endDraft = TimePointDraft(task?.endAt, fallback: env.store.now)
             priority = task?.priority ?? .normal
+            estimateText = EstimateMinutes.text(for: task?.estimateMinutes)
             loaded = true
             focused = true
         }
@@ -100,6 +104,16 @@ struct InlineTaskEditor: View {
                 }.padding().frame(minWidth: 250)
                     .presentationCompactAdaptation(.popover)
             }
+            Button { showEstimate = true } label: {
+                Label(estimateLabel, systemImage: "timer")
+            }
+            .popover(isPresented: $showEstimate) {
+                VStack(alignment: .leading, spacing: MovoSpace.m) {
+                    EstimateMinutesField(text: $estimateText, errorMessage: estimateError)
+                    Button("完成") { showEstimate = false }
+                }.padding().frame(minWidth: 240)
+                    .presentationCompactAdaptation(.popover)
+            }
             Menu {
                 Picker("优先级", selection: $priority) {
                     ForEach(TaskPriority.allCases) { Text($0.displayName).tag($0) }
@@ -109,6 +123,15 @@ struct InlineTaskEditor: View {
         }
         .font(MovoFont.caption).foregroundStyle(MovoColor.primary)
         .buttonStyle(.borderless)
+        .onChange(of: estimateText) { _, new in
+            estimateError = EstimateMinutes.parse(new).invalidMessage
+        }
+    }
+
+    /// 按钮上的预计投入：未设置时不写「未设置」，让按钮读起来像一个动作。
+    private var estimateLabel: String {
+        guard let minutes = EstimateMinutes.parse(estimateText).value else { return "预计投入" }
+        return "\(minutes) 分钟"
     }
 
     /// 按钮上的起止摘要：有开始显示开始，只有结束显示「截止」
@@ -129,6 +152,13 @@ struct InlineTaskEditor: View {
 
     private func save() async {
         guard loaded, !saving, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let estimate = EstimateMinutes.parse(estimateText)
+        guard !estimate.isInvalid else {
+            estimateError = estimate.invalidMessage
+            more = true
+            return
+        }
+        estimateError = nil
         saving = true
         defer { saving = false }
         do {
@@ -137,10 +167,13 @@ struct InlineTaskEditor: View {
             let end = endDraft.point(in: tz)
             let id: UUID
             if let task {
-                let patch = TaskPatch(title: title, notes: notes, priority: priority,
+                let patch = TaskPatch(title: title, notes: notes,
+                                      estimateMinutes: estimate.value, priority: priority,
                                       startAt: start, endAt: end,
-                                      clearNotes: notes.isEmpty, clearStartAt: start == nil, clearEndAt: end == nil)
-                _ = try await env.store.execute(UpdateTask(taskID: task.id, patch: patch, baseRevision: task.revision))
+                                      clearNotes: notes.isEmpty, clearEstimate: estimate.value == nil,
+                                      clearStartAt: start == nil, clearEndAt: end == nil)
+                _ = try await env.store.execute(UpdateTask(taskID: task.id, patch: patch,
+                                                           baseRevision: task.revision))
                 id = task.id
             } else {
                 var currentParent: MovoKit.Task?
@@ -151,7 +184,8 @@ struct InlineTaskEditor: View {
                 let result = try await env.store.execute(CreateTask(
                     title: title, planID: parentID == nil ? planID : currentParent?.planId,
                     stageID: currentParent?.stageId, parentID: parentID, notes: notes.isEmpty ? nil : notes,
-                    startAt: start, endAt: end, priority: priority, source: .manual))
+                    startAt: start, endAt: end, estimateMinutes: estimate.value,
+                    priority: priority, source: .manual))
                 guard let entityID = result.entityID else { throw MovoError.invalidStructure(reason: "没有添加成功，请重试。") }
                 id = entityID
                 title = ""; notes = ""

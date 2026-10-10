@@ -312,13 +312,24 @@ public struct PlanFileOptions: Sendable, Equatable {
 
 public enum PlanFileBuilder {
 
-    /// 选择范围 → 文件。`standaloneTasks` 是没有计划的任务（含重复行动及其步骤）。
+    /// 选择范围 → 文件。`standaloneTasks` 是没有计划的任务（含重复行动及其步骤）；
+    /// `standaloneRecords` 是没有计划的行动记录，写进顶层 `records`。
     public static func build(selections: [ExportPlanSelection], standaloneTasks: [Task],
-                             standaloneRules: [RecurrenceRule], standaloneNotes: [Note],
+                             standaloneRules: [RecurrenceRule],
+                             standaloneRecords: [ActionRecord] = [], standaloneNotes: [Note],
                              options: PlanFileOptions, exportedAt: Date) -> PlanFile {
         let stamp = ISO8601DateFormatter().string(from: exportedAt)
         let plans = selections.map { plan(from: $0, options: options) }
         let loose = taskTree(standaloneTasks, rules: standaloneRules, stages: [])
+        var records: [FileRecord] = []
+        if options.includeRecords {
+            records = CorrectionHistory.current(standaloneRecords)
+                .map { activity in
+                    FileRecord(id: activity.id.uuidString, task: activity.taskId?.uuidString,
+                               at: timeText(activity.happenedAt), minutes: activity.durationMinutes,
+                               text: activity.text)
+                }
+        }
         var notes: [FileNote] = []
         if options.includeNotes {
             notes = standaloneNotes.sorted { $0.capturedAt < $1.capturedAt }
@@ -327,7 +338,8 @@ public enum PlanFileBuilder {
         return PlanFile(exportedAt: stamp,
                         plans: plans.isEmpty ? nil : plans,
                         tasks: loose.isEmpty ? nil : loose,
-                        notes: notes.isEmpty ? nil : notes)
+                        notes: notes.isEmpty ? nil : notes,
+                        records: records.isEmpty ? nil : records)
     }
 
     static func plan(from selection: ExportPlanSelection, options: PlanFileOptions) -> FilePlan {
@@ -341,8 +353,7 @@ public enum PlanFileBuilder {
 
         var records: [FileRecord] = []
         if options.includeRecords {
-            let superseded = Set(selection.activities.compactMap(\.correctedFromId))
-            records = selection.activities.filter { !superseded.contains($0.id) }
+            records = CorrectionHistory.current(selection.activities)
                 .map { activity in
                     FileRecord(id: activity.id.uuidString, task: activity.taskId?.uuidString,
                                at: timeText(activity.happenedAt), minutes: activity.durationMinutes,
@@ -351,8 +362,7 @@ public enum PlanFileBuilder {
         }
         var measurements: [FileMeasurement] = []
         if options.includeMeasurements {
-            let superseded = Set(selection.measurements.compactMap(\.correctedFromId))
-            measurements = selection.measurements.filter { !superseded.contains($0.id) && $0.value.isFinite }
+            measurements = CorrectionHistory.current(selection.measurements).filter { $0.value.isFinite }
                 .map { FileMeasurement(id: $0.id.uuidString, metric: $0.metricId.uuidString,
                                        at: $0.measuredAt.iso8601DateString, value: $0.value, note: $0.note) }
         }

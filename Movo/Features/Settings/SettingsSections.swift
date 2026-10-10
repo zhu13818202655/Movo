@@ -545,6 +545,7 @@ struct NotificationSettingsView: View {
         case .hardDeadline: "exclamationmark.triangle"
         case .weeklyReview: "chart.bar.doc.horizontal"
         case .blockedReview: "arrow.triangle.branch"
+        case .focusEnd: "timer"
         }
     }
 
@@ -561,9 +562,11 @@ struct NotificationSettingsView: View {
 
     private func reload() async {
         status = await scheduler.authorizationStatus()
+        // 把进行中的专注一起算进来：这里预览的应该就是点「写入」之后会落下去的那些。
         planned = await env.notificationService.plan(now: env.store.now,
                                                      timeZone: env.store.currentTimeZone,
-                                                     today: env.store.today)
+                                                     today: env.store.today,
+                                                     focus: env.focusSession)
     }
 
     static func stamp(_ date: Date, in timeZone: TimeZone) -> String {

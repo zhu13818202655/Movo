@@ -533,3 +533,42 @@ public extension View {
         background(MovoColor.bg.ignoresSafeArea())
     }
 }
+
+// MARK: - 时长快捷取值（Focus / StepChips）
+
+/// 一行可选的分钟数，单选。
+///
+/// 计时结束与补记都是「这次坐了多久」这种短数字，逐次手打既慢又容易打错；
+/// 常见取值直接点一下，输入框仍然可以填别的数。
+public struct MovoStepChips: View {
+    private let values: [Int]
+    private let selected: Int?
+    private let onSelect: (Int) -> Void
+
+    public init(values: [Int] = [15, 25, 30, 45, 60], selected: Int? = nil,
+                onSelect: @escaping (Int) -> Void) {
+        self.values = values; self.selected = selected; self.onSelect = onSelect
+    }
+
+    public var body: some View {
+        HStack(spacing: MovoSpace.s) {
+            ForEach(values, id: \.self) { value in
+                let isSelected = value == selected
+                Button { onSelect(value) } label: {
+                    Text("\(value)")
+                        .font(MovoFont.captionEmphasis)
+                        .foregroundStyle(isSelected ? MovoColor.primary : MovoColor.ink)
+                        .padding(.horizontal, MovoSpace.s)
+                        .frame(minWidth: MovoSpace.minTouch, minHeight: 32)
+                        .background(Capsule().fill(isSelected ? MovoColor.tint : MovoColor.surface))
+                        .overlay(Capsule().strokeBorder(isSelected ? MovoColor.primary : MovoColor.line,
+                                                        lineWidth: 1))
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(value) 分钟")
+                .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+            }
+        }
+    }
+}

@@ -71,14 +71,16 @@ public struct ExportPlanSelection: Sendable, Hashable {
     }
 }
 
-/// 不属于任何计划的任务与笔记
+/// 不属于任何计划的任务、记录与笔记
 public struct ExportStandalone: Sendable, Hashable {
     public var tasks: [Task]
     public var rules: [RecurrenceRule]
+    public var activities: [ActionRecord]
     public var notes: [Note]
 
-    public init(tasks: [Task] = [], rules: [RecurrenceRule] = [], notes: [Note] = []) {
-        self.tasks = tasks; self.rules = rules; self.notes = notes
+    public init(tasks: [Task] = [], rules: [RecurrenceRule] = [],
+                activities: [ActionRecord] = [], notes: [Note] = []) {
+        self.tasks = tasks; self.rules = rules; self.activities = activities; self.notes = notes
     }
 }
 
@@ -100,16 +102,22 @@ public struct ExportBundle: Sendable {
     public var format: ExportFormat
     public var includedPlanNames: [String]
     public var standaloneTaskCount: Int
+    /// 未归属任何计划的行动记录条数。这类记录不能被静默丢掉（AC18）。
+    public var standaloneRecordCount: Int
     public var generatedAt: Date
 
     public init(fileName: String, content: String, format: ExportFormat,
-                includedPlanNames: [String], standaloneTaskCount: Int = 0, generatedAt: Date) {
+                includedPlanNames: [String], standaloneTaskCount: Int = 0,
+                standaloneRecordCount: Int = 0, generatedAt: Date) {
         self.fileName = fileName; self.content = content; self.format = format
         self.includedPlanNames = includedPlanNames; self.standaloneTaskCount = standaloneTaskCount
+        self.standaloneRecordCount = standaloneRecordCount
         self.generatedAt = generatedAt
     }
 
-    public var isEmpty: Bool { includedPlanNames.isEmpty && standaloneTaskCount == 0 }
+    public var isEmpty: Bool {
+        includedPlanNames.isEmpty && standaloneTaskCount == 0 && standaloneRecordCount == 0
+    }
 
     public var byteCount: Int { content.lengthOfBytes(using: .utf8) }
 
@@ -121,6 +129,7 @@ public struct ExportBundle: Sendable {
     public var summaryText: String {
         var parts = ["包含 \(includedPlanNames.count) 个计划"]
         if standaloneTaskCount > 0 { parts.append("\(standaloneTaskCount) 项独立待办") }
+        if standaloneRecordCount > 0 { parts.append("\(standaloneRecordCount) 条未归属计划的记录") }
         parts.append(byteCountText)
         return parts.joined(separator: " · ")
     }
@@ -161,9 +170,13 @@ public enum ExportService {
         guard onlyPlanID == nil else { return ExportScope(selections: selections) }
         let looseTasks = tasks.filter { $0.planId == nil }.sorted { $0.createdAt < $1.createdAt }
         let looseIDs = Set(looseTasks.map(\.id))
+        // 无计划的记录必须挂到独立内容上：只按计划聚合会让它们在导出里静默消失（AC18）。
+        let looseActivities = activities.filter { $0.planId == nil }
+            .sorted { $0.happenedAt.sortEpoch < $1.happenedAt.sortEpoch }
         let standalone = ExportStandalone(
             tasks: looseTasks,
             rules: rules.filter { looseIDs.contains($0.taskId) },
+            activities: looseActivities,
             notes: notes.filter { $0.planId == nil }.sorted { $0.capturedAt < $1.capturedAt })
         return ExportScope(selections: selections, standalone: standalone)
     }
@@ -176,6 +189,7 @@ public enum ExportService {
         let selections = scope.selections.map { $0.applying(options) }
         var standalone = scope.standalone
         if !options.includeNotes { standalone.notes = [] }
+        if !options.includeRecords { standalone.activities = [] }
 
         let content: String
         switch format {
@@ -185,7 +199,8 @@ public enum ExportService {
         case .json:
             content = PlanFileCodec.encode(PlanFileBuilder.build(
                 selections: selections, standaloneTasks: standalone.tasks,
-                standaloneRules: standalone.rules, standaloneNotes: standalone.notes,
+                standaloneRules: standalone.rules, standaloneRecords: standalone.activities,
+                standaloneNotes: standalone.notes,
                 options: options, exportedAt: generatedAt))
         }
 
@@ -195,6 +210,7 @@ public enum ExportService {
             content: content, format: format,
             includedPlanNames: selections.map(\.plan.name),
             standaloneTaskCount: standalone.tasks.filter { !$0.isStep }.count,
+            standaloneRecordCount: standalone.activities.count,
             generatedAt: generatedAt)
     }
 
@@ -373,6 +389,23 @@ public enum ExportService {
                     }
                 }
                 lines.append("- [\(task.status == .done ? "x" : " ")] \(task.title)（\(detail.joined(separator: "；"))）")
+            }
+            lines.append("")
+        }
+
+        if !standalone.activities.isEmpty {
+            lines.append("## 未归属计划的行动记录")
+            lines.append("")
+            lines.append("| 日期 | 关联任务 | 时长（分钟） | 说明 | 更正 |")
+            lines.append("| --- | --- | --- | --- | --- |")
+            let titleByID = Dictionary(standalone.tasks.map { ($0.id, $0.title) },
+                                       uniquingKeysWith: { a, _ in a })
+            for activity in standalone.activities {
+                let day = DateOnly(from: activity.happenedAt.sortEpoch, in: timeZone).iso8601DateString
+                let task = activity.taskId.flatMap { titleByID[$0] } ?? "—"
+                let duration = activity.durationMinutes.map(String.init) ?? "—"
+                let text = (activity.text ?? "—").replacingOccurrences(of: "|", with: "／")
+                lines.append("| \(day) | \(task) | \(duration) | \(text) | \(activity.isCorrection ? "是" : "否") |")
             }
             lines.append("")
         }

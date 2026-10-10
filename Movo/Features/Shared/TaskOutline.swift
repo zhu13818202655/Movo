@@ -6,6 +6,9 @@ struct TaskOutline: View {
     @Environment(AppEnvironment.self) private var env
     @Environment(\.movoRouter) private var router
     let nodes: [TodoNode]
+    /// 元信息里的时间怎么显示。今日筛选传 `.today(参考日)`，其余场景传 `.absolute`。
+    /// 故意不设缺省值：每个调用点都要自己说清楚页面是哪个时间上下文。
+    let timeContext: TimeDisplayContext
     @State private var collapsed: Set<UUID> = []
     @State private var error: String?
     @State private var deleting: TodoNode?
@@ -136,11 +139,22 @@ struct TaskOutline: View {
                             .foregroundStyle(node.isContext ? MovoColor.muted : MovoColor.ink)
                             .strikethrough(node.isComplete)
                             .multilineTextAlignment(.leading)
-                        Text(metadata(node, parentTitle: row.parentTitle)).font(MovoFont.caption).foregroundStyle(MovoColor.muted)
+                        // 眼睛看到的是今日上下文（「截止 14:00」），耳朵听到的仍然是绝对时间
+                        // （「截止 10月8日 14:00」）。省掉日期只是省掉屏幕上重复的信息，
+                        // 读出来时用户没有「整页都是今天」这个上下文可以替他补上。
+                        Text(metadata(node, parentTitle: row.parentTitle, in: timeContext))
+                            .font(MovoFont.caption).foregroundStyle(MovoColor.muted)
                             .multilineTextAlignment(.leading)
+                            .accessibilityLabel(metadata(node, parentTitle: row.parentTitle,
+                                                         in: .absolute))
                     }
                     .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                 }.buttonStyle(.plain)
+                // 正在计时的这一行带一个徽标，点它回到计时页；它自己吃掉点击，
+                // 不会穿透到「进入详情」。
+                if let session = env.activeFocus(for: node.id) {
+                    FocusRowBadge(session: session) { router.push(.focus(node.id)) }
+                }
                 Menu {
                     Button("就地编辑") { editing = node.id; inlineParent = nil }
                     if !node.task.isTemplate {
@@ -159,6 +173,18 @@ struct TaskOutline: View {
                         }
                     }
                     Button("设置日期、优先级等") { router.push(.taskDetail(node.id)) }
+                    // 三项互不替代：已经在计时的这一项回到计时页，其余开始一次新的，
+                    // 而「设置日期、优先级等」仍然只是进详情。行本体的点击行为一律不变。
+                    // 开始之后直接进计时页：在清单上按一下却停在原地，看不出那一下生没生效。
+                    if let session = env.activeFocus(for: node.id) {
+                        Button(session.isPaused ? "回到计时（已暂停）" : "回到计时") {
+                            router.push(.focus(node.id))
+                        }
+                    } else if !node.task.isTemplate {
+                        Button("开始专注") {
+                            if env.beginFocus(node.task) { router.push(.focus(node.id)) }
+                        }
+                    }
                     Button("删除…", role: .destructive) {
                         _Concurrency.Task {
                             deleting = node
@@ -175,7 +201,10 @@ struct TaskOutline: View {
         }
     }
 
-    private func metadata(_ node: TodoNode, parentTitle: String?) -> String {
+    /// 行内元信息。`context` 只影响时刻那一段的写法：今日筛选传今日上下文，
+    /// 省掉「今天」这个日期；传 `.absolute` 得到完整时间，用于无障碍标签。
+    private func metadata(_ node: TodoNode, parentTitle: String?,
+                          in context: TimeDisplayContext) -> String {
         var parts = [node.planName ?? "独立待办"]
         #if !os(macOS)
         if let parentTitle { parts = ["上级：\(parentTitle)"] }
@@ -186,9 +215,11 @@ struct TaskOutline: View {
             // 展示频率，否则会读成「这个重复行动只在某一天截止」。
             parts.append(summary)
         } else {
-            if let start = node.task.startAt { parts.append("开始 \(start.displayString)") }
+            // 今日筛选下参考日当天的日期是冗余的（整页都是今天），只留时刻；
+            // 逾期、明天、其他日期的日期照常显示。
+            if let start = node.task.startAt { parts.append("开始 \(start.displayString(in: context))") }
             else if node.task.endAt == nil { parts.append("未安排") }
-            if let end = node.task.endAt { parts.append("截止 \(end.displayString)") }
+            if let end = node.task.endAt { parts.append("截止 \(end.displayString(in: context))") }
         }
         if node.isContext { parts.append("上级待办") }
         return parts.joined(separator: " · ")

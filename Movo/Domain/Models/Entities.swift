@@ -526,7 +526,9 @@ public struct RecurrenceOccurrence: Identifiable, Hashable, Sendable, Codable {
 
 public struct ActionRecord: Identifiable, Hashable, Sendable, Codable {
     public var id: UUID
-    public var planId: UUID
+    /// 记录归属的计划。独立待办的记录没有计划，所以可空。
+    /// 有计划时由 `LogActivity` 保证与任务的归属一致；无计划记录在回顾统计里归入已有的「未分类」。
+    public var planId: UUID?
     public var taskId: UUID?
     public var occurrenceId: UUID?
     /// 实际发生时间或已知粒度；补记昨天 → happenedAt=昨天
@@ -542,7 +544,7 @@ public struct ActionRecord: Identifiable, Hashable, Sendable, Codable {
     public var createdAt: Date
     public var revision: Int
 
-    public init(id: UUID = UUID(), planId: UUID, taskId: UUID? = nil, occurrenceId: UUID? = nil,
+    public init(id: UUID = UUID(), planId: UUID?, taskId: UUID? = nil, occurrenceId: UUID? = nil,
                 happenedAt: TimeValue, durationMinutes: Int? = nil, text: String? = nil,
                 source: SourceKind = .manual, isCorrection: Bool = false, correctedFromId: UUID? = nil,
                 recordedAt: Date = Date(), createdAt: Date = Date(), revision: Int = 1) {

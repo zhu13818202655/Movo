@@ -126,10 +126,11 @@ public enum DemoFixtures {
             createdAt: at(8, 31, 10, 7)))
 
         func task(_ id: UUID, _ stage: UUID?, _ parent: UUID?, _ title: String,
-                  _ status: TaskStatus, scheduled: DateOnly? = nil,
+                  _ status: TaskStatus, scheduled: DateOnly? = nil, estimate: Int? = nil,
                   createdAt: Date, doneAt: Date? = nil, cancelledAt: Date? = nil) -> Task {
             Task(id: id, planId: plan.id, stageId: stage, parentId: parent, title: title,
-                 status: status, startAt: scheduled.map { TimePoint.day($0) }, tags: ["汇报"],
+                 status: status, startAt: scheduled.map { TimePoint.day($0) },
+                 estimateMinutes: estimate, tags: ["汇报"],
                  source: .manual, doneAt: doneAt, cancelledAt: cancelledAt,
                  createdAt: createdAt, updatedAt: doneAt ?? cancelledAt ?? now)
         }
@@ -145,8 +146,11 @@ public enum DemoFixtures {
             "整理分析", .inProgress, createdAt: at(9, 14, 19, 0)))
         try await store.repository.upsert(task(IDs.growthTrend, IDs.stageDraft, IDs.analysisGroup,
             "梳理增长变化", .done, createdAt: at(9, 15, 9, 0), doneAt: at(9, 18, 20, 0)))
+        // 「汇总区域差异」带预计投入 30 分钟：这样预览里的「开始专注」推得出倒计时长度，
+        // 而不是一律落到正计时。与它已有的 20 分钟历史记录搭在一起，
+        // 还能让结束浮层的「比计划少 10 分钟」有东西可显示。
         try await store.repository.upsert(task(IDs.regionalDiff, IDs.stageDraft, IDs.analysisGroup,
-            "汇总区域差异", .inProgress, scheduled: today,
+            "汇总区域差异", .inProgress, scheduled: today, estimate: 30,
             createdAt: at(9, 19, 9, 0)))
         try await store.repository.upsert(task(IDs.writeDraft, IDs.stageDraft, nil,
             "撰写汇报初稿", .todo, scheduled: tomorrow, createdAt: at(9, 21, 9, 0)))

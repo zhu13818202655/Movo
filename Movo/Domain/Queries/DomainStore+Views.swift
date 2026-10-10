@@ -199,7 +199,8 @@ public extension DomainStore {
         let epoch = DateOnly(y: 1, m: 1, d: 1, sourceTZ: "UTC")
         let occurrences = (await repository.occurrences(taskID: taskID))
             .sorted { ($0.scheduledOn ?? epoch) > ($1.scheduledOn ?? epoch) }
-        let activities = (await repository.activities(taskID: taskID))
+        // 更正过的记录会同时留下旧版本，列表只要当前值（见 CorrectionHistory）。
+        let activities = CorrectionHistory.current(await repository.activities(taskID: taskID))
             .sorted { $0.happenedAt.sortEpoch > $1.happenedAt.sortEpoch }
         let notes = await repository.notes(planID: task.planId)
         let timeline = await timeline(entityID: taskID, title: task.title, entityType: .task)
@@ -416,7 +417,8 @@ public extension DomainStore {
         var categoryCounts: [PlanCategory?: Int] = [:]
         let planById = Dictionary(plans.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         for activity in weekActivities {
-            let cat = planById[activity.planId]?.category
+            // 没有计划的记录归入已有的「未分类」，不另开一类。
+            let cat = activity.planId.flatMap { planById[$0]?.category }
             categoryCounts[cat, default: 0] += 1
         }
         let totalCount = weekActivities.count

@@ -468,7 +468,8 @@ public struct PlanDetailScreen: View {
     private func reload() async {
         detail = await env.store.planDetail(planID)
         timelineView = await env.store.planTimelineView(planID)
-        activities = (await env.store.repository.activities(planID: planID))
+        // 和任务详情一样只列当前值：更正过的记录会留下旧版本，两个页面不能各显示一套。
+        activities = CorrectionHistory.current(await env.store.repository.activities(planID: planID))
             .sorted { $0.happenedAt.sortEpoch > $1.happenedAt.sortEpoch }
         // 默认展开当前阶段
         if expanded.isEmpty, let stage = detail?.currentStage { expanded.insert(stage.id.uuidString) }

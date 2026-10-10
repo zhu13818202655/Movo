@@ -142,6 +142,18 @@ public final class AppEnvironment {
     /// 频率编辑的待确认草稿（编辑器 → M09-FrequencyPreview 影响预览）
     public var pendingRecurrence: RecurrenceDraft?
 
+    // MARK: 专注计时（7.2）
+
+    /// 进行中的专注会话；nil 表示未开始。同一时刻只保留一次。
+    /// setter 只开给同模块（接线在 `AppEnvironment+Focus.swift`），界面只读。
+    public internal(set) var focusSession: FocusPolicy.Session?
+    /// 冷启动时算出的久置提示。只在打开应用时问一次，不在计时过程中反复弹。
+    public internal(set) var focusStaleness: FocusPolicy.Staleness?
+    /// 计时页与任务详情顶上那条一次性提示。当前有两种来由：开始计时被拦下，
+    /// 以及结束计时时按计划时长截断了记录。两者共用同一个位置，所以标题跟着内容走。
+    public var focusNotice: FocusNotice?
+    @ObservationIgnored let focusSessionStore: any FocusSessionStore
+
     private var speechSession: SpeechSession?
 
     // MARK: - 初始化
@@ -153,6 +165,7 @@ public final class AppEnvironment {
                 speech: any SpeechTranscriptionService,
                 notificationScheduler: any NotificationScheduling = LocalNotificationScheduler(),
                 aiSettingsStore: any AISettingsStore = InMemoryAISettingsStore(),
+                focusSessionStore: any FocusSessionStore = InMemoryFocusSessionStore(),
                 vendor: AIVendor? = nil, capturePreferences: UserDefaults? = nil) {
         self.store = store
         self.defaults = defaults
@@ -161,6 +174,7 @@ public final class AppEnvironment {
         self.speech = speech
         self.notificationScheduler = notificationScheduler
         self.aiSettingsStore = aiSettingsStore
+        self.focusSessionStore = focusSessionStore
         self.capturePreferences = capturePreferences
         self.captureText = capturePreferences?.string(forKey: "movo.capture.draft") ?? ""
         self.capturePlanID = capturePreferences?.string(forKey: "movo.capture.plan").flatMap(UUID.init(uuidString:))
@@ -168,6 +182,13 @@ public final class AppEnvironment {
         if let data = capturePreferences?.data(forKey: "movo.capture.proposals"),
            let proposals = try? JSONDecoder().decode([UUID: AIProposal].self, from: data) {
             self.savedProposals = proposals
+        }
+        // 冷启动恢复：会话本身带着锚点与暂停区间，所以「接着走」不需要额外状态，
+        // 把字段读回来就够。久置提示只在这里算一次——计时过程中不再反复弹。
+        let restored = focusSessionStore.load()
+        self.focusSession = restored
+        self.focusStaleness = restored.flatMap {
+            FocusPolicy.staleness($0, at: store.now, thresholdHours: defaults.focus.staleSessionHours)
         }
 
         let saved = aiSettingsStore.load()
@@ -295,12 +316,17 @@ public final class AppEnvironment {
     }
 
     /// 重新计算并写入系统通知（数据变更后调用，幂等覆盖）。
+    ///
+    /// 进行中的专注会话一并传进去：计时状态不落领域库，取数层看不到它，
+    /// 而专注到点提醒必须与安排一起被同一次「替换」写入——否则下次数据变更重排时
+    /// 会把这条提醒顺手抹掉。
     @discardableResult
     public func refreshNotifications() async -> [PlannedNotification] {
         await notificationService.refresh(now: store.now,
                                           timeZone: store.currentTimeZone,
                                           today: store.today,
-                                          hideDetails: notificationsHideDetails)
+                                          hideDetails: notificationsHideDetails,
+                                          focus: focusSession)
     }
 
     /// 生产环境：SwiftData 落盘 + Keychain。
@@ -318,7 +344,9 @@ public final class AppEnvironment {
         return AppEnvironment(store: store, defaults: defaults, catalog: catalog,
                               keyStore: KeychainAIKeyStore(),
                               speech: AppleSpeechTranscriptionService(defaults: defaults),
-                              aiSettingsStore: UserDefaultsAISettingsStore(), capturePreferences: .standard)
+                              aiSettingsStore: UserDefaultsAISettingsStore(),
+                              focusSessionStore: UserDefaultsFocusSessionStore(),
+                              capturePreferences: .standard)
     }
 
     /// 预览/测试环境：内存仓库 + 内存 Keychain + 内存 AI 偏好。

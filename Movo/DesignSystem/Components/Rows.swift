@@ -16,20 +16,32 @@ public struct TaskRowConfig: Hashable, Sendable {
     public var category: PlanCategory?
     public var status: TaskStatus
     public var timeText: String?
+    /// `timeText` 的完整写法，只用于无障碍标签。今日上下文下的 `timeText` 会省掉「今天」，
+    /// 眼睛里整页都是今天、读出来时没有这个上下文，所以标签要补回完整时间。
+    /// 为空表示与 `timeText` 相同，不需要单独读一遍。
+    public var timeTextSpoken: String?
     public var dependencyText: String?
     public var isCompletedToday: Bool
     public var footnote: String?
     /// 勾选框的辅助说明。重复行动的候选是「记录这次」，不是「标记完成」。
     public var toggleLabel: String?
+    /// 正在计时时的行尾徽标，形如 `18:23`。数字由页面按当前时刻算好传进来，
+    /// 设计系统不做逐秒推进——那样每个用到行的地方都要自带一个时钟。
+    public var focusBadge: String?
+    public var focusBadgeIsPaused: Bool
 
     public init(title: String, planName: String? = nil, category: PlanCategory? = nil,
-                status: TaskStatus = .todo, timeText: String? = nil, dependencyText: String? = nil,
+                status: TaskStatus = .todo, timeText: String? = nil,
+                timeTextSpoken: String? = nil, dependencyText: String? = nil,
                 isCompletedToday: Bool = false, footnote: String? = nil,
-                toggleLabel: String? = nil) {
+                toggleLabel: String? = nil,
+                focusBadge: String? = nil, focusBadgeIsPaused: Bool = false) {
         self.title = title; self.planName = planName; self.category = category
-        self.status = status; self.timeText = timeText; self.dependencyText = dependencyText
+        self.status = status; self.timeText = timeText
+        self.timeTextSpoken = timeTextSpoken; self.dependencyText = dependencyText
         self.isCompletedToday = isCompletedToday; self.footnote = footnote
         self.toggleLabel = toggleLabel
+        self.focusBadge = focusBadge; self.focusBadgeIsPaused = focusBadgeIsPaused
     }
 }
 
@@ -38,14 +50,26 @@ public struct TaskRow: View {
     private let showsCheckbox: Bool
     private let onToggle: (() -> Void)?
     private let onTap: (() -> Void)?
+    /// 非 nil 时在行尾显示「…」，内含「开始专注」。
+    /// 清单行直接开始用的是这个入口，行本体的点击行为不变。
+    private let onFocus: (() -> Void)?
+    /// 点行尾的计时徽标回到计时页。
+    private let onFocusTap: (() -> Void)?
 
     public init(config: TaskRowConfig, showsCheckbox: Bool = true,
-                onToggle: (() -> Void)? = nil, onTap: (() -> Void)? = nil) {
+                onToggle: (() -> Void)? = nil, onTap: (() -> Void)? = nil,
+                onFocus: (() -> Void)? = nil, onFocusTap: (() -> Void)? = nil) {
         self.config = config; self.showsCheckbox = showsCheckbox
         self.onToggle = onToggle; self.onTap = onTap
+        self.onFocus = onFocus; self.onFocusTap = onFocusTap
     }
 
-    public init(item: TodayItem, onToggle: (() -> Void)? = nil, onTap: (() -> Void)? = nil) {
+    /// 从今日条目构造。`timeContext` 决定时刻标签是否省略日期：今日筛选下传 `.today(参考日)`，
+    /// 其余场景保持缺省的 `.absolute`，宁多显示日期也不丢信息。
+    public init(item: TodayItem, timeContext: TimeDisplayContext = .absolute,
+                onToggle: (() -> Void)? = nil, onTap: (() -> Void)? = nil,
+                onFocus: (() -> Void)? = nil, focusBadge: String? = nil,
+                focusBadgeIsPaused: Bool = false, onFocusTap: (() -> Void)? = nil) {
         let planName = item.planName
         let status: TaskStatus = {
             switch item.body {
@@ -65,14 +89,19 @@ public struct TaskRow: View {
         }()
         self.config = TaskRowConfig(
             title: item.title, planName: planName, category: nil, status: status,
-            timeText: item.timeText,
+            timeText: item.timeText(in: timeContext),
+            // 只在两者不同、也就是确实省掉了日期的时候才补一句完整时间。
+            timeTextSpoken: timeContext == .absolute ? nil : item.timeText(in: .absolute),
             dependencyText: item.dependency.isReady ? nil : item.dependency.badgeText,
             isCompletedToday: item.isCompletedToday,
             footnote: item.section == .completed ? nil : item.displayStatus,
-            toggleLabel: item.isRoutineCandidate ? "记录这次" : nil)
+            toggleLabel: item.isRoutineCandidate ? "记录这次" : nil,
+            focusBadge: focusBadge, focusBadgeIsPaused: focusBadgeIsPaused)
         self.showsCheckbox = true
         self.onToggle = onToggle
         self.onTap = onTap
+        self.onFocus = onFocus
+        self.onFocusTap = onFocusTap
     }
 
     public var body: some View {
@@ -108,7 +137,10 @@ public struct TaskRow: View {
                         PlanCategoryTag(category, compact: true)
                     }
                     if let timeText = config.timeText {
+                        // 屏幕上省掉「今天」，读屏时补回来（见 timeTextSpoken）。
+                        // 两者相同时标签就等于文字本身，等于没加。
                         MovoTag(timeText, systemImage: "clock")
+                            .accessibilityLabel(config.timeTextSpoken ?? timeText)
                     }
                     if let dependencyText = config.dependencyText {
                         MovoTag(dependencyText, systemImage: "arrow.triangle.branch")
@@ -128,10 +160,46 @@ public struct TaskRow: View {
                 StatusTag(text: "受阻", foreground: MovoColor.warning,
                           background: MovoColor.soft, systemImage: "exclamationmark.triangle.fill")
             }
+
+            if let badge = config.focusBadge {
+                focusBadge(badge)
+            }
+
+            if let onFocus {
+                // 用「…」而不是直接的播放按钮：行本身已经有勾选框和点击进入详情，
+                // 再加一个常驻图标会让每一行的注意力被摊薄。
+                Menu {
+                    Button("开始专注", systemImage: "play.fill", action: onFocus)
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .foregroundStyle(MovoColor.muted)
+                        .frame(width: MovoSpace.minTouch, height: MovoSpace.minTouch)
+                        .contentShape(Rectangle())
+                }
+                .menuStyle(.borderlessButton)
+                .frame(width: MovoSpace.minTouch)
+                .accessibilityLabel("更多操作")
+            }
         }
         .padding(.vertical, MovoSpace.s)
         .contentShape(Rectangle())
         .onTapGesture { onTap?() }
+    }
+
+    /// 计时徽标。点它可以回到计时页，所以它得自己吃掉点击，不能穿透到行本体的「进入详情」。
+    @ViewBuilder
+    private func focusBadge(_ text: String) -> some View {
+        let tag = MovoTag(text, systemImage: config.focusBadgeIsPaused ? "pause.fill" : "timer")
+        if let onFocusTap {
+            Button(action: onFocusTap) {
+                tag.frame(minHeight: MovoSpace.minTouch)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(config.focusBadgeIsPaused ? "计时已暂停 \(text)" : "计时中 \(text)")
+        } else {
+            tag
+        }
     }
 
     private var checkboxIcon: String {

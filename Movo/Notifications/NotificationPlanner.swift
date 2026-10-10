@@ -3,8 +3,9 @@
 //  Notifications
 //
 //  10.9 本地通知排期（纯计算，可单测）。
-//  · 五类：具体时刻任务、仅日期任务、硬截止、周期回顾、受阻复查。
+//  · 六类：具体时刻任务、仅日期任务、硬截止、周期回顾、受阻复查、专注到点。
 //  · 聚合窗口内的多条合并为一条；落在安静时段内的顺延到安静时段结束。
+//  · 专注到点是用户刚刚亲手设下的一个闹钟，不走顺延也不并进聚合（见 focusEnd）。
 //  · 通知标识确定性（同一对象重复排期覆盖同一条，不会重复打扰）。
 //  · 锁屏默认不显示正文（lockScreenHideDetails）。
 //
@@ -20,6 +21,7 @@ public struct PlannedNotification: Identifiable, Hashable, Sendable {
         case hardDeadline
         case weeklyReview
         case blockedReview
+        case focusEnd
 
         public var displayName: String {
             switch self {
@@ -28,6 +30,7 @@ public struct PlannedNotification: Identifiable, Hashable, Sendable {
             case .hardDeadline: "硬截止提醒"
             case .weeklyReview: "周期回顾"
             case .blockedReview: "受阻复查"
+            case .focusEnd: "专注到点"
             }
         }
     }
@@ -60,6 +63,9 @@ public struct PlannedNotification: Identifiable, Hashable, Sendable {
 public enum NotificationPlanner {
 
     /// 生成未来窗口内的通知。窗口默认 14 天，覆盖跨周安排。
+    ///
+    /// `focus` 是当前进行中的专注会话（没有则为 nil）。它不属于「未来两周的安排」，
+    /// 而是此刻正在跑的一件事，因此单独成条、独立于下面的窗口判断。
     public static func plan(tasks: [Task],
                             plans: [Plan],
                             rules: [RecurrenceRule],
@@ -68,7 +74,8 @@ public enum NotificationPlanner {
                             now: Date,
                             timeZone: TimeZone,
                             today: DateOnly,
-                            horizonDays: Int = 14) -> [PlannedNotification] {
+                            horizonDays: Int = 14,
+                            focus: FocusPolicy.Session? = nil) -> [PlannedNotification] {
         let config = defaults.notifications
         let horizon = today.adding(days: max(1, horizonDays))
         let planIndex = Dictionary(plans.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
@@ -169,11 +176,39 @@ public enum NotificationPlanner {
 
         // 安静时段顺延 + 聚合窗口合并 + 排序
         let shifted = out.map { applyQuietHours($0, config: config, timeZone: timeZone) }
-        return aggregate(shifted, windowMinutes: config.aggregationWindowMinutes)
-            .sorted { $0.fireDate < $1.fireDate }
+        var result = aggregate(shifted, windowMinutes: config.aggregationWindowMinutes)
+
+        // 专注到点在顺延与聚合之后单独追加：这是用户刚刚亲手设下的一个闹钟。
+        // 把它顺延到安静时段结束（早上 7 点），或并进「有 N 项要看一下」，
+        // 都不再是他在按下「开始专注」时许诺的那一次提醒。
+        if let end = focusEnd(focus, defaults: defaults, now: now) {
+            result.append(end)
+        }
+
+        return result.sorted { $0.fireDate < $1.fireDate }
     }
 
     // MARK: - 内部
+
+    /// 进行中会话的到点提醒；不该排期时返回 nil。
+    ///
+    /// 排期时刻取 `FocusPolicy.effectiveEnd` 而不是会话的名义锚点：暂停 20 分钟后继续，
+    /// 终点就往后挪 20 分钟，否则提醒会提前 20 分钟响。该方法本身已覆盖三种「不排期」——
+    /// 正计时没有终点、暂停中冻结、已经归零——因此这里只需要再挡一次开关与时刻。
+    static func focusEnd(_ focus: FocusPolicy.Session?, defaults: AppDefaults,
+                         now: Date) -> PlannedNotification? {
+        guard defaults.focus.remindAtEnd, let focus,
+              let fireDate = FocusPolicy.effectiveEnd(focus, at: now),
+              fireDate > now else { return nil }
+        return PlannedNotification(
+            id: "movo.focus.\(focus.id.uuidString)",
+            kind: .focusEnd,
+            title: "专注到点了",
+            body: "「\(focus.taskTitle)」的计划时长已经走完，回来记一下这次投入。",
+            fireDate: fireDate,
+            entityID: focus.taskID,
+            deepLink: "movo://focus/\(focus.taskID.uuidString)")
+    }
 
     static func planned(_ kind: PlannedNotification.Kind, task: Task,
                         title: String, body: String, fireDate: Date,

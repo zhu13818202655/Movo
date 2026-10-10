@@ -21,8 +21,10 @@ public enum NotificationDeepLink: Hashable, Sendable {
     case settings
     case plan(UUID)
     case task(UUID)
+    /// 专注到点：落到计时页而不是任务详情。带着正在跑的会话打开，用户回来就能点结束。
+    case focus(UUID)
 
-    /// `movo://plan/<uuid>/task/<uuid>` / `movo://task/<uuid>` / `movo://today` …
+    /// `movo://plan/<uuid>/task/<uuid>` / `movo://task/<uuid>` / `movo://focus/<uuid>` / `movo://today` …
     public static func parse(_ string: String) -> NotificationDeepLink? {
         let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.hasPrefix("movo://") else { return nil }
@@ -39,6 +41,9 @@ public enum NotificationDeepLink: Hashable, Sendable {
             return nil
         case "task":
             if let id = parts.dropFirst().first, let uuid = UUID(uuidString: id) { return .task(uuid) }
+            return nil
+        case "focus":
+            if let id = parts.dropFirst().first, let uuid = UUID(uuidString: id) { return .focus(uuid) }
             return nil
         default:
             return nil

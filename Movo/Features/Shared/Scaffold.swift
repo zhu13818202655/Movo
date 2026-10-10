@@ -181,3 +181,39 @@ public struct ScreenScroll<Content: View>: View {
         .movoPageBackground()
     }
 }
+
+// MARK: - 计时页舞台
+
+/// 计时页的内容容器。
+///
+/// 与 `ScreenScroll` 只差一条，但正是这一条决定了两页的样子：`ScreenScroll` 服务的是列表页，
+/// 内容限宽 760 并**左对齐**——长列表左对齐才读得下去，右边留白是正常的。
+/// 计时页是一屏单件内容：一个标题、一个盘、一排按钮。沿用同一套「限宽 760 + 左对齐」，
+/// 整套东西就会缩到左上角，右边和下面各空一大片。
+///
+/// 所以这里改成水平与垂直**双向居中**，并把列宽压到 520：再宽主按钮就成了一条
+/// 横穿屏幕的长条，按钮也就不再像一个按钮。仍然可滚动——小屏叠加大字号时内容会比一屏高，
+/// 那时不能把主按钮顶出可视区，只是居中的余量变成 0。
+public struct FocusStage<Content: View>: View {
+    private let columnWidth: CGFloat
+    private let content: Content
+
+    public init(columnWidth: CGFloat = 520, @ViewBuilder content: () -> Content) {
+        self.columnWidth = columnWidth
+        self.content = content()
+    }
+
+    public var body: some View {
+        GeometryReader { proxy in
+            ScrollView {
+                VStack(spacing: MovoSpace.l) { content }
+                    .padding(.horizontal, MovoSpace.pageMargin)
+                    .padding(.vertical, MovoSpace.xl)
+                    .frame(maxWidth: columnWidth)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: proxy.size.height, alignment: .center)
+            }
+        }
+        .movoPageBackground()
+    }
+}

@@ -18,10 +18,12 @@ public struct TaskDetailScreen: View {
     @State private var detail: TaskDetail?
     @State private var childNodes: [TodoNode] = []
     @State private var childProgress = ""
-    @State private var dateEditor = false
+    @State private var sheet: DetailSheet?
     @State private var startDraft = TimePointDraft()
     @State private var endDraft = TimePointDraft()
     @State private var priority = TaskPriority.normal
+    @State private var estimateText = ""
+    @State private var estimateError: String?
     @State private var formError: String?
     @State private var rangeWarning: String?
     @State private var showHistory = false
@@ -43,6 +45,24 @@ public struct TaskDetailScreen: View {
         let depth: Int
         var id: UUID { task.id }
     }
+
+    /// 这一页只有一个浮层宿主。多个 `.sheet` 叠在同一个视图上时，
+    /// SwiftUI 只会认其中一个，另外几个会「点了没反应」。
+    private enum DetailSheet: Identifiable {
+        case arrangement
+        case logActivity
+        /// 改一条已经写下的行动记录。带上记录 ID，浮层自己去库里取内容。
+        case correctActivity(UUID)
+
+        var id: String {
+            switch self {
+            case .arrangement: "arrangement"
+            case .logActivity: "logActivity"
+            case .correctActivity(let activityID): "correctActivity-\(activityID.uuidString)"
+            }
+        }
+    }
+
     public init(taskID: UUID) { self.taskID = taskID }
 
     public var body: some View {
@@ -72,24 +92,43 @@ public struct TaskDetailScreen: View {
             Button("先不标记", role: .cancel) { completePrompt = nil }
         } message: {
             Text("标记本次完成？不会影响未来的安排。")
-        }        .sheet(isPresented: $dateEditor) {
-            VStack(alignment: .leading, spacing: MovoSpace.m) {
-                Text("时间与优先级").font(MovoFont.title2)
-                MovoTimePointField("开始时间", draft: $startDraft, timeZone: env.store.currentTimeZone)
-                MovoTimePointField("结束时间", draft: $endDraft, timeZone: env.store.currentTimeZone)
-                Picker("优先级", selection: $priority) {
-                    ForEach(TaskPriority.allCases) { value in Text(value.displayName).tag(value) }
-                }
-                if let formError { Text(formError).foregroundStyle(.red) }
-                HStack {
-                    MovoButton("保存") { _Concurrency.Task { await saveArrangement() } }
-                    MovoButton("取消", kind: .quiet) { dateEditor = false }
-                }
-            }.padding(MovoSpace.m)
-            #if os(macOS)
-            .frame(minWidth: 420)
-            #endif
         }
+        .sheet(item: $sheet) { which in
+            switch which {
+            case .arrangement: arrangementSheet
+            case .logActivity:
+                LogActivitySheet(taskTitle: detail?.task.title ?? "", taskID: taskID)
+            case .correctActivity(let activityID):
+                // 记录可能刚刚被别处改动或删除，取不到就什么都不弹，不拿一份旧快照去写更正。
+                if let activity = detail?.activities.first(where: { $0.id == activityID }) {
+                    CorrectActivitySheet(activity: activity, taskTitle: detail?.task.title ?? "")
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var arrangementSheet: some View {
+        VStack(alignment: .leading, spacing: MovoSpace.m) {
+            Text("时间、优先级、预计投入").font(MovoFont.title2)
+            MovoTimePointField("开始时间", draft: $startDraft, timeZone: env.store.currentTimeZone)
+            MovoTimePointField("结束时间", draft: $endDraft, timeZone: env.store.currentTimeZone)
+            Picker("优先级", selection: $priority) {
+                ForEach(TaskPriority.allCases) { value in Text(value.displayName).tag(value) }
+            }
+            EstimateMinutesField(text: $estimateText, errorMessage: estimateError)
+                .onChange(of: estimateText) { _, new in
+                    estimateError = EstimateMinutes.parse(new).invalidMessage
+                }
+            if let formError { Text(formError).foregroundStyle(.red) }
+            HStack {
+                MovoButton("保存") { _Concurrency.Task { await saveArrangement() } }
+                MovoButton("取消", kind: .quiet) { sheet = nil }
+            }
+        }.padding(MovoSpace.m)
+        #if os(macOS)
+        .frame(minWidth: 420)
+        #endif
     }
 
     @ViewBuilder
@@ -116,6 +155,9 @@ public struct TaskDetailScreen: View {
                         if detail.task.startAt != nil {
                             Button("清除开始时间") { _Concurrency.Task { await clearSchedule(detail) } }
                         }
+                        // 这里不再放「开始专注」：它已经移成一排之后紧跟标题的主按钮，
+                        // 同一个页面上给同一个动作两个入口只会让人犹豫该点哪个。
+                        // 列表行「…」菜单里的那一项是另一个页面的事，保留。
                     }
                     if detail.parent == nil {
                         Button(detail.task.isTemplate ? "修改频率" : "设置/修改频率") {
@@ -178,6 +220,19 @@ public struct TaskDetailScreen: View {
                 .padding(MovoSpace.s)
             }
 
+            // 主操作区紧跟在标题之后。原先这一排挂在整页滚动的末尾：
+            // 打开一项待办要先滚过所属与时间、子任务、步骤、行动记录、变更历史，
+            // 才看得到一个 44 高的按钮，而且它和旁边两个次按钮一样大。
+            // 打开一项待办的第一个念头是「开始做它」，所以主操作排在信息前面。
+            actionArea(detail)
+
+            // 提示紧挨着主操作区：它要么是「刚才那一下为什么没开始」，要么是
+            // 「刚结束的这次按计划时长记下了」。两种都要贴着按钮看，不甩到页面末尾。
+            if let notice = env.focusNotice {
+                MovoBanner(kind: .info, title: notice.title, message: notice.message,
+                           actions: [("知道了", { env.clearFocusNotice() })])
+            }
+
             // 所属与时间（开始 / 结束分开）
             if let rangeWarning {
                 MovoBanner(kind: .warning, title: "时间超出了范围", message: rangeWarning)
@@ -207,16 +262,18 @@ public struct TaskDetailScreen: View {
                                 value: detail.task.endAt?.displayString ?? "未设置",
                                 actionTitle: "编辑") { _Concurrency.Task { await editDeadline(detail) } }
                     }
-                    if let estimate = detail.task.estimateMinutes {
-                        MovoDivider().padding(.leading, MovoSpace.s)
-                        infoRow("预计投入", value: "\(estimate) 分钟", actionTitle: nil, action: {})
-                    }
+                    // 未设置时也保留这一行：它是「开始专注」推导时长的最后一个来源，
+                    // 藏起来会让用户找不到入口。
+                    MovoDivider().padding(.leading, MovoSpace.s)
+                    infoRow("预计投入",
+                            value: EstimateMinutes.displayText(for: detail.task.estimateMinutes),
+                            actionTitle: "编辑") { _Concurrency.Task { await editEstimate(detail) } }
                 }
             }
 
             if !detail.task.isTemplate {
                 SectionBlock("子任务", trailing: childProgress) {
-                    TaskOutline(nodes: childNodes)
+                    TaskOutline(nodes: childNodes, timeContext: .absolute)
                     MovoButton("添加子任务", systemImage: "plus", kind: .quiet) {
                         router.present(.newTask(planID: detail.task.planId, parentID: taskID, scheduledToday: false))
                     }.padding(MovoSpace.s)
@@ -287,6 +344,12 @@ public struct TaskDetailScreen: View {
                                         }
                                     }
                                     Spacer(minLength: 0)
+                                    // 记录写下来之后仍然可以改。计时结束不再让人确认时长，
+                                    // 算错的那一次（比如到点后拖延被按计划时长截断）就得有个补正的地方。
+                                    MovoButton("改", kind: .quiet) {
+                                        sheet = .correctActivity(activity.id)
+                                    }
+                                    .accessibilityLabel("改这条记录：\(timeText(activity.happenedAt.sortEpoch))")
                                 }
                                 .padding(MovoSpace.s)
                             }
@@ -312,17 +375,74 @@ public struct TaskDetailScreen: View {
                     }
                 }
             }
+        }
+    }
 
-            HStack(spacing: MovoSpace.s) {
-                if detail.children.isEmpty {
-                MovoButton(detail.task.status == .done ? "重新打开" : "标记完成",
-                           systemImage: detail.task.status == .done ? "arrow.counterclockwise" : "checkmark",
-                           kind: .primary) { _Concurrency.Task { await toggleDone(detail) } }
+    // MARK: - 主操作区
+
+    /// 任务的主操作区，紧跟在标题之后。
+    ///
+    /// 原先这一排挂在整页滚动的末尾：打开一项待办要先滚过所属与时间、子任务、步骤、
+    /// 行动记录、变更历史，才看得到一个 44 高的按钮，而且它和旁边两个次按钮一样大。
+    /// 打开一项待办的第一个念头是「开始做它」，所以主操作排在信息前面，
+    /// 规格与计时页的主按钮一致（整行、高 52）。
+    ///
+    /// 列宽压到 420：详情页的内容列是 760，主按钮若铺满整列就成了一条横穿页面的长条，
+    /// 不再像一个按钮。420 与本应用其它「单件内容」（浮层、空状态）同宽。
+    @ViewBuilder
+    private func actionArea(_ detail: TaskDetail) -> some View {
+        VStack(alignment: .leading, spacing: MovoSpace.s) {
+            if !detail.task.isTemplate {
+                if let session = env.activeFocus(for: taskID) {
+                    // 计时中主按钮给「暂停」而不是「结束」：结束不再经过确认框，
+                    // 按一下就直接写进一条记录，所以最显眼的这个位置留给能退回来的动作。
+                    // 与计时页一致，也回到「主操作 / 次要操作」那张表。
+                    FocusPrimaryButton(session.isPaused ? "继续专注" : "暂停",
+                                       systemImage: session.isPaused ? "play.fill" : "pause.fill") {
+                        if session.isPaused { env.resumeFocus() } else { env.pauseFocus() }
+                    }
+                } else {
+                    FocusPrimaryButton(env.focusPlan(for: detail.task).buttonTitle,
+                                       systemImage: "play.fill") {
+                        // 开始了就进计时页。停在详情页、等用户自己去点顶上那条计时条，
+                        // 等于把「我刚按的那一下生效了吗」变成一个要自己找答案的问题。
+                        // 被拦下时（另一次正在计时）留在原地，让紧跟着的横幅说明原因。
+                        if env.beginFocus(detail.task) { router.push(.focus(detail.task.id)) }
+                    }
                 }
-                MovoButton("记录一次行动", kind: .secondary) { _Concurrency.Task { await logActivity(detail) } }
-                Spacer(minLength: 0)
+            }
+            restingActions(detail)
+        }
+        .frame(maxWidth: 420, alignment: .leading)
+    }
+
+    /// 计时之外的次按钮。窄屏叠加大字号时这一排会放不下，
+    /// 那时改成竖排，而不是把最后一个按钮挤出屏幕。
+    @ViewBuilder
+    private func restingActions(_ detail: TaskDetail) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: MovoSpace.s) { restingButtons(detail) }
+            VStack(alignment: .leading, spacing: MovoSpace.s) { restingButtons(detail) }
+        }
+    }
+
+    @ViewBuilder
+    private func restingButtons(_ detail: TaskDetail) -> some View {
+        if !detail.task.isTemplate, env.activeFocus(for: taskID) != nil {
+            // 计时中与暂停中都只给「结束专注」：结束不再弹「这次投入」，
+            // 直接按计划时长或有效已用时长写一条记录，所以不需要在按钮上再分岔。
+            // 暂停已经由上面的主按钮承担，这里不再重复给一个「暂停」。
+            MovoButton("结束专注", systemImage: "stop.fill", kind: .secondary) {
+                _Concurrency.Task { await env.finishFocus() }
             }
         }
+        if detail.children.isEmpty {
+            MovoButton(detail.task.status == .done ? "重新打开" : "标记完成",
+                       systemImage: detail.task.status == .done
+                           ? "arrow.counterclockwise" : "checkmark",
+                       kind: .secondary) { _Concurrency.Task { await toggleDone(detail) } }
+        }
+        MovoButton("记录一次行动", kind: .secondary) { sheet = .logActivity }
     }
 
     @ViewBuilder
@@ -602,26 +722,38 @@ public struct TaskDetailScreen: View {
 
     private func editDeadline(_ detail: TaskDetail) async { openArrangement(detail) }
 
+    private func editEstimate(_ detail: TaskDetail) async { openArrangement(detail) }
+
     private func openArrangement(_ detail: TaskDetail) {
         startDraft = TimePointDraft(detail.task.startAt, fallback: env.store.now)
         endDraft = TimePointDraft(detail.task.endAt, fallback: env.store.now)
         priority = detail.task.priority ?? .normal
+        estimateText = EstimateMinutes.text(for: detail.task.estimateMinutes)
+        estimateError = nil
         formError = nil
-        dateEditor = true
+        sheet = .arrangement
     }
 
     private func saveArrangement() async {
         guard let detail else { return }
+        let estimate = EstimateMinutes.parse(estimateText)
+        guard !estimate.isInvalid else {
+            estimateError = estimate.invalidMessage
+            return
+        }
+        estimateError = nil
         do {
             let tz = env.store.currentTimeZone
             let start = startDraft.point(in: tz)
             let end = endDraft.point(in: tz)
-            let patch = TaskPatch(priority: priority, startAt: start, endAt: end,
+            let patch = TaskPatch(estimateMinutes: estimate.value, priority: priority,
+                                  startAt: start, endAt: end,
+                                  clearEstimate: estimate.value == nil,
                                   clearStartAt: start == nil, clearEndAt: end == nil)
             let update = UpdateTask(taskID: taskID, patch: patch, baseRevision: detail.task.revision)
-            _ = try await env.store.executeBatch(BatchInput(commands: [update], summary: "已更新时间与优先级"))
+            _ = try await env.store.executeBatch(BatchInput(commands: [update], summary: "已更新时间与投入"))
             env.lastBatchNotice = env.store.lastNotification
-            dateEditor = false
+            sheet = nil
         } catch { formError = error.localizedDescription }
     }
 
@@ -649,22 +781,93 @@ public struct TaskDetailScreen: View {
         await reload()
     }
 
-    private func logActivity(_ detail: TaskDetail) async {
-        guard let planID = detail.task.planId else {
-            env.lastError = .invalidStructure(reason: "这条记录需要先挂到一个计划下。")
-            return
-        }
-        _ = try? await env.store.execute(LogActivity(planID: planID, taskID: taskID,
-                                                 happenedAt: .precise(env.store.now),
-                                                 durationMinutes: nil, text: nil, source: .manual))
-        env.lastBatchNotice = env.store.lastNotification
-        await reload()
-    }
-
     private func timeText(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh-Hans")
         formatter.dateFormat = "M月d日 HH:mm"
         return formatter.string(from: date)
+    }
+}
+
+// MARK: - 更正一条行动记录
+
+/// 改一条已经写下的行动记录的时长与说明。
+///
+/// 计时结束不再让人确认时长，那一笔算错之后就必须能改（到点后拖延被按计划时长截断，
+/// 或者正计时被打断）。`CorrectActivity` 不改写原来那条，而是新写一条 `isCorrection`
+/// 记录指回它——PRD 3.4 要求保留旧版本。列表因此按当前值过滤
+/// （`CorrectionHistory.current`），改完只看到一条。
+///
+/// 这里不开放「发生时间」：它决定这条记录落在哪一天、进哪一周的回顾，
+/// 而写它的时候是用户自己选的；改它属于另一件事，不混在「改这次投入」里。
+struct CorrectActivitySheet: View {
+    @Environment(AppEnvironment.self) private var env
+    @Environment(\.dismiss) private var dismiss
+
+    let activity: ActionRecord
+    let taskTitle: String
+
+    @State private var minutesText = ""
+    @State private var minutesError: String?
+    @State private var note = ""
+    @State private var preparing = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MovoSpace.m) {
+            Text("改这次投入").font(MovoFont.title2).foregroundStyle(MovoColor.ink)
+            Text(taskTitle).font(MovoFont.caption).foregroundStyle(MovoColor.muted)
+                .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+
+            EstimateMinutesField("投入时长", text: $minutesText,
+                                 placeholder: "不填就只留一条记录",
+                                 errorMessage: minutesError,
+                                 showsSteppers: true,
+                                 chips: [15, 25, 30, 45, 60])
+                .onChange(of: minutesText) { _, new in
+                    minutesError = EstimateMinutes.parse(new, subject: "投入时长").invalidMessage
+                }
+
+            MovoTextField("说明", text: $note, placeholder: "补一句说明（可选）", axis: .vertical)
+
+            Text("更正保留原来的版本；列表里只显示当前值。")
+                .font(MovoFont.caption).foregroundStyle(MovoColor.muted)
+
+            FocusPrimaryButton("保存更正", systemImage: "checkmark", isLoading: preparing) {
+                submit()
+            }
+            MovoButton("取消", kind: .quiet, isEnabled: !preparing) { dismiss() }
+        }
+        .padding(MovoSpace.l)
+        .onAppear {
+            minutesText = activity.durationMinutes.map(String.init) ?? ""
+            note = activity.text ?? ""
+        }
+        #if os(macOS)
+        .frame(minWidth: 420)
+        #endif
+    }
+
+    private func submit() {
+        let input = EstimateMinutes.parse(minutesText, subject: "投入时长")
+        guard !input.isInvalid else {
+            minutesError = input.invalidMessage
+            return
+        }
+        minutesError = nil
+        preparing = true
+        let trimmedNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        // 空着表示「清掉这一项」，所以 clearDuration / clearText 要显式带上：
+        // `CorrectActivity` 里 nil 是「不改」，不是「清空」，两者不能混。
+        let command = CorrectActivity(activityID: activity.id,
+                                      newDurationMinutes: input.value,
+                                      newText: trimmedNote.isEmpty ? nil : trimmedNote,
+                                      clearDuration: input.value == nil,
+                                      clearText: trimmedNote.isEmpty,
+                                      baseRevision: activity.revision)
+        _Concurrency.Task {
+            await env.correctActivity(command)
+            preparing = false
+            dismiss()
+        }
     }
 }

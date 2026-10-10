@@ -398,10 +398,7 @@ xcodebuild build \
 
 ```bash
 cd /Users/louis/codes/movo/Movo
-xcodebuild build \
-  -project Movo.xcodeproj -scheme Movo -configuration Debug \
-  -destination 'platform=iOS Simulator,name=iPhone 17' \
-  -derivedDataPath /Users/louis/codes/movo/.build/DerivedData-iOS
+xcodebuild build -project Movo.xcodeproj -scheme Movo -configuration Debug -destination 'platform=iOS Simulator,name=iPhone 17' -derivedDataPath /Users/louis/codes/movo/.build/DerivedData-iOS
 ```
 
 ### 3.4 单元测试
@@ -476,6 +473,25 @@ swift-plugin-server produced malformed response
 ```
 
 这是沙箱拦截导致的，**不是代码问题**。**VS Code 的内置终端不受影响**，直接在里面跑即可。
+
+同一个原因还会表现为另一条更直白的报错，出现在 `@Observable` 展开的位置：
+
+```
+sandbox_apply: Operation not permitted
+error: the compiler is unable to type-check this expression in reasonable time
+```
+
+它指的是给宏插件套的那层 `sandbox-exec` 起不来（`sandbox-exec` 自己也是被沙箱限制的进程），不是表达式真的复杂。**判定方法**：同一条命令在普通终端里通过、只在代跑环境里失败，就是环境限制。
+
+**绕过方式**：给 `xcodebuild` 追加 `-disable-sandbox`，关掉编译器给宏插件套的沙箱。`Scripts/verify.sh` 没有内置这个开关（它面向正常终端），在受限环境里改为手动执行：
+
+```bash
+export OTHER_SWIFT_FLAGS='-disable-sandbox'
+xcodebuild test -project Movo.xcodeproj -scheme Movo -configuration Debug \
+  -destination 'platform=macOS' -derivedDataPath /Users/louis/codes/movo/.build/DerivedData
+```
+
+`export` 之后 `Scripts/verify.sh` 也能直接跑通——`xcodebuild` 会从环境读取这个构建设置。
 
 ### 3.7 App 图标
 

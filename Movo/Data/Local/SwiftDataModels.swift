@@ -149,14 +149,15 @@ public final class OccurrenceM {
 @Model
 public final class ActivityM {
     @Attribute(.unique) public var id: UUID
-    public var planID: UUID
+    /// 可空：独立待办的记录没有计划（见 `ActionRecord.planId`）。
+    public var planID: UUID?
     public var taskID: UUID?
     public var occurrenceID: UUID?
     public var happenedEpoch: Date
     public var recordedAt: Date
     public var payload: Data
 
-    public init(id: UUID, planID: UUID, taskID: UUID?, occurrenceID: UUID?,
+    public init(id: UUID, planID: UUID?, taskID: UUID?, occurrenceID: UUID?,
                 happenedEpoch: Date, recordedAt: Date, payload: Data) {
         self.id = id; self.planID = planID; self.taskID = taskID; self.occurrenceID = occurrenceID
         self.happenedEpoch = happenedEpoch; self.recordedAt = recordedAt; self.payload = payload

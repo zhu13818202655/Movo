@@ -14,7 +14,7 @@ public struct LogActivity: DomainCommand {
     public let kind: OperationKind = .logActivity
     public let entityID: UUID
     public let entityType: EntityType = .activity
-    public var planID: UUID
+    public var planID: UUID?
     public var taskID: UUID?
     public var occurrenceID: UUID?
     public var happenedAt: TimeValue
@@ -22,7 +22,8 @@ public struct LogActivity: DomainCommand {
     public var text: String?
     public var source: SourceKind
 
-    public init(operationID: UUID = UUID(), id: UUID = UUID(), planID: UUID, taskID: UUID? = nil,
+    /// `planID` 可以不给：关联了任务时以任务的归属为准，没给也不影响。
+    public init(operationID: UUID = UUID(), id: UUID = UUID(), planID: UUID? = nil, taskID: UUID? = nil,
                 occurrenceID: UUID? = nil, happenedAt: TimeValue, durationMinutes: Int? = nil,
                 text: String? = nil, source: SourceKind = .manual) {
         self.operationID = operationID; self.entityID = id; self.planID = planID; self.taskID = taskID
@@ -32,22 +33,29 @@ public struct LogActivity: DomainCommand {
 
     @MainActor
     public func execute(in context: CommandContext) async throws -> CommandResult {
-        guard await context.repository.plan(planID) != nil else {
-            throw MovoError.notFound(entityType: .plan, id: planID)
-        }
+        // 归属以任务为准：任务有计划就继承它，任务没有计划这条记录也就没有计划（PRD REQ 12 / AC23）。
+        // 显式传了 planID 时仍然要求与任务一致，避免记录挂到别的计划下。
+        var resolvedPlanID = planID
         if let taskID {
             guard let task = await context.repository.task(taskID) else {
                 throw MovoError.notFound(entityType: .task, id: taskID)
             }
-            if task.planId != planID {
+            if let explicit = planID, explicit != task.planId {
                 throw MovoError.invalidStructure(reason: "这条记录和任务不属于同一个计划。")
+            }
+            resolvedPlanID = task.planId
+        }
+        if let resolvedPlanID {
+            guard await context.repository.plan(resolvedPlanID) != nil else {
+                throw MovoError.notFound(entityType: .plan, id: resolvedPlanID)
             }
         }
         if let occurrenceID {
             guard let occurrence = await context.repository.occurrence(occurrenceID) else {
                 throw MovoError.notFound(entityType: .occurrence, id: occurrenceID)
             }
-            if occurrence.planId != planID {
+            // 重复实例一定属于某个计划，所以没有计划的记录不能挂到实例上。
+            guard occurrence.planId == resolvedPlanID else {
                 throw MovoError.invalidStructure(reason: "这条记录和重复实例不属于同一个计划。")
             }
         }
@@ -55,7 +63,7 @@ public struct LogActivity: DomainCommand {
             throw MovoError.invalidStructure(reason: "投入时长需要是正数。")
         }
 
-        let activity = ActionRecord(id: entityID, planId: planID, taskId: taskID,
+        let activity = ActionRecord(id: entityID, planId: resolvedPlanID, taskId: taskID,
                                     occurrenceId: occurrenceID, happenedAt: happenedAt,
                                     durationMinutes: durationMinutes, text: text,
                                     source: source, recordedAt: context.now, createdAt: context.now)

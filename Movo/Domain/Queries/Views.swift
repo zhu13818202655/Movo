@@ -223,14 +223,24 @@ public struct TodayItem: Identifiable, Hashable, Sendable {
         self.isCompletedToday = isCompletedToday
     }
 
-    /// 行内展示的时刻文本：只显示精确到时刻的那一端，例如 "08:00" 或 "08:00–09:00"
-    public var timeText: String? {
-        switch (startAt?.clockText, endAt?.clockText) {
-        case (let s?, let e?): return "\(s)–\(e)"
-        case (let s?, nil): return s
-        case (nil, let e?): return "\(e) 前"
+    /// 行内展示的时刻文本：只显示精确到时刻的那一端，例如 "08:00" 或 "08:00–09:00"。
+    /// 按上下文决定是否补上日期：今日筛选下与参考日相同的日期不重复出现，其余日期照常补全。
+    public func timeText(in context: TimeDisplayContext) -> String? {
+        let start = startAt?.clockText
+        let end = endAt?.clockText
+        switch (start, end) {
+        case (let s?, let e?): return timePrefix(in: context) + "\(s)–\(e)"
+        case (let s?, nil): return timePrefix(in: context) + s
+        case (nil, let e?): return timePrefix(in: context) + "\(e) 前"
         case (nil, nil): return nil
         }
+    }
+
+    /// 时间标签的日期前缀，取较靠前的那一端所在日期；两端都没有时刻时为空串。
+    private func timePrefix(in context: TimeDisplayContext) -> String {
+        let anchor = startAt?.isInstant == true ? startAt : endAt
+        guard let anchor, anchor.isInstant else { return "" }
+        return context.timePrefix(for: anchor.dateOnly)
     }
 
     public var taskId: UUID? {
@@ -252,6 +262,20 @@ public struct TodayItem: Identifiable, Hashable, Sendable {
     public var occurrenceId: UUID? {
         if case .occurrence(let o, _) = body { return o.id }
         return nil
+    }
+
+    /// 可以直接开始专注的任务。
+    ///
+    /// 只有一次性待办才有「这次要做多久」的语义。重复行动（模板与它的实例）的
+    /// `startAt`/`endAt` 是规则窗口的两端，拿窗口长度当倒计时会得出一个以月计的数字；
+    /// 「今天也可以做」还是派生投影，连一条记录都还没有可归属的对象。两者都不给入口。
+    public var focusableTask: Task? {
+        switch body {
+        case .deadline(let t), .scheduled(let t), .inProgress(let t), .floating(let t), .overdue(let t, _):
+            return t.isTemplate ? nil : t
+        case .occurrence, .routine:
+            return nil
+        }
     }
 
     /// 是不是「今天也可以做」的重复行动候选（派生，还没有实例）

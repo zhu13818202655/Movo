@@ -109,6 +109,7 @@ public enum PlanFileImporter {
 
     /// 生成导入计划：逐项转换、预演、汇总问题。纯读取，不写入真实数据。
     /// `targetPlanID` 非空时，文件顶层的阶段、指标、任务、记录、测量值、笔记都放进这个已有计划。
+    /// 为空时，顶层的任务、记录、笔记导入为无计划内容；阶段、指标、测量值必须有计划可放。
     /// `targetTaskID` 非空时（需要同时指定目标计划），顶层 `tasks` 作为这个任务的子任务导入。
     public static func makePlan(file: PlanFile, store: DomainStore,
                                 duplicateMode: PlanImportDuplicateMode,
@@ -155,8 +156,8 @@ public enum PlanFileImporter {
         } else {
             builder.requirePlan(for: "阶段", count: file.stages?.count ?? 0)
             builder.requirePlan(for: "指标", count: file.metrics?.count ?? 0)
-            builder.requirePlan(for: "行动记录", count: file.records?.count ?? 0)
             builder.requirePlan(for: "测量值", count: file.measurements?.count ?? 0)
+            // 行动记录不在此列：没有目标计划时它导入为无计划记录（见 addRecord）。
         }
         // 子任务的上级必须是未完成的普通待办：重复行动下只能是步骤，已完成的任务下不该再添新的未完成子任务
         var parent: (id: UUID, stage: UUID?)?
@@ -181,10 +182,10 @@ public enum PlanFileImporter {
             builder.addTask(task, scope: &looseScope, parent: parent, pathPrefix: taskPrefix)
         }
         builder.finish(scope: &looseScope, pathPrefix: loosePath + " / ")
+        for record in file.records ?? [] {
+            builder.addRecord(record, scope: &looseScope, planPath: loosePath)
+        }
         if target != nil {
-            for record in file.records ?? [] {
-                builder.addRecord(record, scope: &looseScope, planPath: loosePath)
-            }
             for item in file.measurements ?? [] {
                 builder.addMeasurement(item, scope: &looseScope, planPath: loosePath)
             }
@@ -196,15 +197,17 @@ public enum PlanFileImporter {
         return await dryRun(builder, store: store, skipped: skipped, existing: target)
     }
 
-    /// 导入页用：文件顶层是否有必须放进某个计划才能导入的内容
+    /// 导入页用：文件顶层是否有必须放进某个计划才能导入的内容。
+    /// 行动记录不在此列：没有目标计划时它导入为无计划记录。
     public static func needsTargetPlan(_ file: PlanFile) -> Bool {
         !(file.stages ?? []).isEmpty || !(file.metrics ?? []).isEmpty
-            || !(file.records ?? []).isEmpty || !(file.measurements ?? []).isEmpty
+            || !(file.measurements ?? []).isEmpty
     }
 
     /// 导入页用：文件顶层是否有可以放进已有计划的内容
     public static func hasLooseContent(_ file: PlanFile) -> Bool {
-        needsTargetPlan(file) || !(file.tasks ?? []).isEmpty || !(file.notes ?? []).isEmpty
+        needsTargetPlan(file) || !(file.tasks ?? []).isEmpty
+            || !(file.records ?? []).isEmpty || !(file.notes ?? []).isEmpty
     }
 
     /// 导入页用：计划里可以放新子任务的任务（未完成的普通待办），按层级排好并带缩进深度
@@ -686,8 +689,7 @@ struct Builder {
 
     mutating func addRecord(_ record: FileRecord, scope: inout PlanScope, planPath: String) {
         let path = "\(planPath) / 行动记录「\(record.at)」"
-        guard let planID = scope.planID,
-              let id = define(record.id, scope: "record", in: &scope, path: path) else { return }
+        guard let id = define(record.id, scope: "record", in: &scope, path: path) else { return }
         let parsed = time(record.at, field: "at", path: path)
         guard parsed.ok else { return }
         guard let point = parsed.value else {
@@ -707,6 +709,8 @@ struct Builder {
                 report(.warning, path, "找不到关联任务「\(ref)」，这条记录导入时没有关联任务。")
             }
         }
+        // 选了目标计划就挂进那个计划，没选就是无计划记录——和顶层 `tasks` 的处理一致。
+        let planID = scope.planID
         add(LogActivity(id: id, planID: planID, taskID: taskID, happenedAt: happenedAt,
                         durationMinutes: record.minutes, text: record.text),
             .record, label: path, requires: [planID, taskID])
